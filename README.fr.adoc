@@ -1,0 +1,190 @@
+= jawas
+:toc: left
+:toc-title: Sommaire
+
+Couteau suisse de sauvegarde, écrit en Crystal : dumps MySQL/MariaDB,
+PostgreSQL et SQLite, rotation quotidienne/hebdomadaire/mensuelle,
+compresseur au choix, empreintes SHA-256, configuration TOML.
+
+`jawas` reprend les principes
+https://sourceforge.net/projects/automysqlbackup/[d'automysqlbackup]
+(rotation daily/weekly/monthly, une archive par base, hooks avant/après)
+et les élargit : plusieurs moteurs, plusieurs serveurs dans une même
+configuration, et une feuille de route vers le chiffrement `age`,
+l'envoi distant et la restauration vérifiée.
+
+English version: link:README.adoc[README.adoc].
+
+== Fonctionnalités (0.1.0)
+
+* *Moteurs* : MySQL et MariaDB (`mysqldump` / `mariadb-dump`),
+  PostgreSQL (`pg_dump`, SQL ou format `custom`, plus les rôles via
+  `pg_dumpall --globals-only`), SQLite (copie à chaud cohérente via
+  `.backup`, ou dump SQL).
+* *Plusieurs sources* par configuration (`[[source]]`), découverte
+  automatique des bases, exclusions par motif (`test_*`) et par table.
+* *Rotation* : chaque exécution alimente `daily` ; le jour choisi, le
+  même fichier est lié (hardlink, zéro octet de plus) dans `weekly`
+  et/ou `monthly`. Durées en jours par période et plancher `keep_min`
+  qui empêche une panne prolongée de vider le stockage.
+* *Compression* en flux : `none`, `gzip`, `pigz`, `bzip2`, `xz`,
+  `zstd`, avec niveau et threads.
+* *Intégrité* : écriture dans un `.part` puis renommage atomique,
+  fichier `.sha256` (format `sha256sum -c`), fichiers en 0600 et
+  répertoires en 0700, lien `latest/` vers le dernier dump.
+* *Sécurité des identifiants* : aucun mot de passe en clair dans la
+  configuration ni en ligne de commande (`password_env`,
+  `password_file`, `defaults_file`).
+* *Exploitation* : verrou contre les exécutions concurrentes, hooks
+  `pre`/`post`, rapport JSON `last-run.json`, codes de sortie
+  exploitables par la supervision.
+
+== Installation
+
+[source,shell]
+----
+git clone git@github.com-aloli:aloli-crystal/jawas.git
+shards build --release --production
+ln -s "$PWD/bin/jawas" ~/bin/jawas
+----
+
+Outils externes, selon les moteurs et le compresseur utilisés :
+`mysqldump`/`mariadb-dump`, `pg_dump`/`pg_dumpall`/`psql`, `sqlite3`,
+`gzip`/`pigz`/`bzip2`/`xz`/`zstd`.
+
+== Démarrage rapide
+
+[source,shell]
+----
+jawas sample > ~/.config/jawas/config.toml
+jawas check
+jawas backup
+jawas backup --apply
+jawas list
+----
+
+`backup` et `prune` sont en *dry-run* par défaut : ils affichent ce
+qu'ils feraient. `--apply` (`-a`) exécute réellement. Exemple de ligne
+cron :
+
+[source]
+----
+15 3 * * *  /usr/local/bin/jawas backup --apply --quiet
+----
+
+== Configuration
+
+Recherche dans l'ordre : `--config CHEMIN`,
+`${XDG_CONFIG_HOME:-~/.config}/jawas/config.toml` (ignoré avec
+`--no-user-config`), `/etc/jawas/config.toml`,
+`/usr/local/etc/jawas/config.toml`. `jawas sample` affiche un modèle
+complet et commenté. Les clés inconnues sont refusées (pas de faute de
+frappe silencieuse).
+
+[source,toml]
+----
+[storage]
+dir = "/var/backups/jawas"
+
+[schedule]
+weekly_day = 6        # samedi (1 = lundi … 7 = dimanche)
+monthly_day = 1
+
+[retention]           # jours
+daily = 7
+weekly = 35
+monthly = 180
+keep_min = 2
+
+[compression]
+tool = "zstd"
+level = 6
+
+[[source]]
+name = "mariadb"
+engine = "mariadb"
+socket = "/run/mysqld/mysqld.sock"
+user = "backup"
+password_file = "/etc/jawas/mariadb.password"
+
+[[source]]
+name = "pg"
+engine = "postgresql"
+socket = "/var/run/postgresql"
+user = "postgres"
+----
+
+== Arborescence produite
+
+[source]
+----
+/var/backups/jawas/
+├── mariadb/
+│   ├── daily/app/app_2026-11-16_03h15.daily.sql.zst
+│   ├── daily/app/app_2026-11-16_03h15.daily.sql.zst.sha256
+│   ├── weekly/app/…            (liens physiques)
+│   ├── monthly/app/…
+│   └── latest/app.sql.zst → ../daily/app/app_2026-11-16_03h15.daily.sql.zst
+├── pg/…
+└── last-run.json
+----
+
+== Commandes
+
+[cols="1,1,4"]
+|===
+| Commande | Court | Rôle
+
+| `backup` | `b` | Dumps, liens, rotation, rapport (dry-run sans `--apply`)
+| `prune`  | `p` | Rotation seule (dry-run sans `--apply`)
+| `list`   | `l` | Inventaire des sauvegardes du stockage
+| `check`  | `c` | Configuration, exécutables, stockage, connexions
+| `sample` | `s` | Modèle de configuration
+| `help`   | `h` | Aide globale ou `help <commande>`
+|===
+
+Options : `-c/--config`, `-U/--no-user-config`, `-a/--apply`,
+`-s/--source` et `-d/--database` (répétables ou `a,b`),
+`-P/--no-prune`, `-j/--json`, `-q/--quiet`, `-v/--version`,
+`-h/--help`.
+
+Codes de sortie : `0` succès, `1` usage ou configuration, `2` au moins
+une base en échec, `3` verrou tenu par une autre exécution.
+
+== Différences avec automysqlbackup
+
+* Configuration TOML validée au lieu d'un fichier shell sourcé.
+* Une exécution = une série `daily` continue ; weekly/monthly sont des
+  liens physiques au lieu de dumps séparés.
+* Rétention avec plancher `keep_min`.
+* Pas de mot de passe dans la configuration (fichier d'options 0600
+  temporaire pour MySQL, `PGPASSWORD` pour PostgreSQL).
+* Pas encore d'envoi de rapport par mail ni de mode différentiel :
+  voir la feuille de route.
+
+== Feuille de route
+
+0. *0.2* — chiffrement `age` (destinataires multiples, cohérent avec
+   `aloli-crystal/secrets`), notification mail/webhook du rapport.
+0. *0.3* — `verify` (sommes SHA-256, test d'intégrité de l'archive) et
+   `restore` (dans la base d'origine ou une base jetable).
+0. *0.4* — envoi distant : SFTP/rsync, stockage objet S3 (OVH,
+   Scaleway…).
+0. *0.5* — politique de rétention GFS fine, métriques pour la
+   supervision.
+0. Ensuite — sources « fichiers » (rsync, archives tar), au-delà des
+   bases de données.
+
+== Développement
+
+[source,shell]
+----
+shards install
+crystal spec
+crystal tool format src/ spec/
+crystal run lib/ameba/bin/ameba.cr -- src spec
+----
+
+== Licence
+
+MIT — voir `LICENSE`.

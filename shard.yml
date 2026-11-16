@@ -1,0 +1,28 @@
+name: jawas
+version: 0.1.0
+
+description: |
+  Swiss-army backup tool: MySQL/MariaDB, PostgreSQL and SQLite dumps
+  with daily/weekly/monthly rotation, a choice of compressor and a
+  TOML configuration. A Crystal reimagining of automysqlbackup.
+
+authors:
+  - Philippe Nénert <philippe@aloli.fr>
+
+crystal: ">= 1.21.0"
+
+license: MIT
+
+targets:
+  jawas:
+    main: src/cli.cr
+
+dependencies:
+  toml:
+    github: aloli-crystal/toml
+    version: "~> 0.1.7"
+
+development_dependencies:
+  ameba:
+    github: crystal-ameba/ameba
+    version: "~> 1.7"

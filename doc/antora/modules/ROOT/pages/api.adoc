@@ -1,0 +1,13 @@
+= API
+
+* `Jawas::Config` — chargement et validation de la configuration TOML.
+* `Jawas::Runner` — orchestration `backup` / `prune`, renvoie un
+  `Jawas::Report` (sérialisable en JSON).
+* `Jawas::Source` et `Jawas::Sources::{MySQL,PostgreSQL,SQLite}` —
+  découverte des bases et dump sur un `IO`.
+* `Jawas::Archiver` — dump → compression → fichier, SHA-256, liens.
+* `Jawas::Retention` — rotation par période avec plancher `keep_min`.
+* `Jawas::Inventory` — inventaire du stockage.
+* `Jawas::Compressor`, `Jawas::Layout`, `Jawas::Calendar`.
+
+La documentation détaillée est générée par `crystal docs`.

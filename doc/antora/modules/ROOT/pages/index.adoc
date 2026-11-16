@@ -1,0 +1,25 @@
+= Jawas
+:description: Couteau suisse de sauvegarde : MySQL/MariaDB, PostgreSQL, SQLite.
+
+Couteau suisse de sauvegarde écrit en Crystal : dumps MySQL/MariaDB,
+PostgreSQL et SQLite, rotation quotidienne/hebdomadaire/mensuelle,
+compresseur au choix, empreintes SHA-256, configuration TOML.
+Réinterprétation d'automysqlbackup.
+
+== Statut
+
+* *Version* : {page-component-display-version}
+* *Repo* : https://github.com/aloli-crystal/jawas[aloli-crystal/jawas]
+* *Licence* : MIT
+
+== Démarrage rapide
+
+[source,shell]
+----
+jawas sample > ~/.config/jawas/config.toml
+jawas check
+jawas backup --apply
+jawas list
+----
+
+Pour les détails, voir xref:usage.adoc[Utilisation].

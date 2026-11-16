@@ -1,0 +1,49 @@
+= Utilisation
+
+== CLI
+
+[source,shell]
+----
+jawas help
+jawas help backup
+jawas backup                    # dry-run : ce qui serait fait
+jawas backup --apply            # exécution réelle
+jawas b -a -s pg -d app,_globals
+jawas prune --apply
+jawas list --json
+jawas check
+----
+
+`backup` et `prune` sont en dry-run par défaut ; `--apply` (`-a`)
+exécute. Codes de sortie : `0` succès, `1` configuration, `2` au moins
+une base en échec, `3` verrou tenu.
+
+== Configuration
+
+`jawas sample` affiche le modèle complet. Points clés :
+
+* `[storage] dir` : racine du stockage (0700).
+* `[schedule]` : `weekly_day` (1 = lundi … 7, 0 = désactivé),
+  `monthly_day` (1 … 31, ramené au dernier jour des mois courts).
+* `[retention]` : jours par période, `keep_min` sauvegardes toujours
+  gardées par base.
+* `[compression]` : `tool`, `level`, `threads`.
+* `[hooks]` : `pre` (un échec annule), `post` (reçoit `JAWAS_STATUS`
+  et `JAWAS_REPORT`).
+* `[[source]]` : `engine` (`mysql`, `mariadb`, `postgresql`,
+  `sqlite`), connexion (`host`, `port`, `socket`, `user`),
+  identifiants (`password_env`, `password_file`, `defaults_file`),
+  sélection (`databases` ou `paths`, `exclude`, `exclude_tables`),
+  options (`format`, `globals`, `single_transaction`, `routines`,
+  `events`, `extra_args`, `dump_bin`, `client_bin`).
+
+== Bibliothèque
+
+[source,crystal]
+----
+require "jawas"
+
+config = Jawas::Config.load("/etc/jawas/config.toml")
+report = Jawas::Runner.new(config).backup(apply: true)
+puts report.to_pretty_json unless report.ok?
+----

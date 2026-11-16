@@ -1,0 +1,30 @@
+= Changelog
+:toc: left
+:toc-title: Versions
+
+All notable changes to `aloli-crystal/jawas` are documented
+here. The format follows
+https://keepachangelog.com/1.1.0/[Keep a Changelog] and
+versioning follows https://semver.org/[SemVer]
+(3-digit for creations, 4-digit for ports of Ruby gems).
+
+== v0.1.0 — 2026-11-16
+
+=== Added
+
+* Shard created from
+  https://github.com/aloli-crystal/shard-template[aloli-crystal/shard-template]
+  (Crystal reimagining of automysqlbackup).
+* MySQL/MariaDB, PostgreSQL (plain or `custom`, roles via `_globals`)
+  and SQLite (hot `.backup` or SQL dump) engines.
+* Validated TOML configuration (unknown keys rejected), XDG then
+  `/etc/jawas` lookup; no clear-text password.
+* Daily/weekly/monthly rotation through hard links, retention in days
+  with a `keep_min` floor.
+* Streaming compression: none, gzip, pigz, bzip2, xz, zstd.
+* `.part` files + atomic rename, `.sha256` sidecars, 0600/0700
+  permissions, `latest/` links.
+* CLI `backup`, `prune`, `list`, `check`, `sample`, `help` (shorts
+  b, p, l, c, s, h), dry-run by default and `--apply`.
+* Lock, `pre`/`post` hooks, `last-run.json` report, exit codes
+  0/1/2/3.

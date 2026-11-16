@@ -1,0 +1,24 @@
+= Installation
+
+== Binaire
+
+[source,shell]
+----
+git clone git@github.com-aloli:aloli-crystal/jawas.git
+shards build --release --production
+ln -s "$PWD/bin/jawas" ~/bin/jawas
+----
+
+Outils externes selon les moteurs et le compresseur :
+`mysqldump`/`mariadb-dump`, `pg_dump`/`pg_dumpall`/`psql`, `sqlite3`,
+`gzip`/`pigz`/`bzip2`/`xz`/`zstd`. `jawas check` vérifie leur présence.
+
+== Comme bibliothèque
+
+[source,yaml]
+----
+dependencies:
+  jawas:
+    github: aloli-crystal/jawas
+    version: "~> 0.1"
+----

@@ -1,0 +1,148 @@
+= jawas
+:toc: left
+
+A Swiss-army backup tool written in Crystal: MySQL/MariaDB, PostgreSQL
+and SQLite dumps, daily/weekly/monthly rotation, a choice of
+compressor, SHA-256 checksums, TOML configuration.
+
+`jawas` builds on the ideas of
+https://sourceforge.net/projects/automysqlbackup/[automysqlbackup]
+(daily/weekly/monthly rotation, one archive per database, pre/post
+hooks) and widens them: several engines, several servers in one
+configuration, and a roadmap towards `age` encryption, remote upload
+and verified restores.
+
+Version française : link:README.fr.adoc[README.fr.adoc].
+
+== Features (0.1.0)
+
+* *Engines*: MySQL and MariaDB (`mysqldump` / `mariadb-dump`),
+  PostgreSQL (`pg_dump`, plain SQL or `custom` format, plus roles via
+  `pg_dumpall --globals-only`), SQLite (consistent hot copy through
+  `.backup`, or SQL dump).
+* *Several sources* per configuration (`[[source]]`), automatic
+  database discovery, pattern (`test_*`) and table exclusions.
+* *Rotation*: every run feeds `daily`; on the chosen day the same file
+  is hard-linked (zero extra bytes) into `weekly` and/or `monthly`.
+  Per-period retention in days and a `keep_min` floor so a long
+  outage can never empty the storage.
+* *Streaming compression*: `none`, `gzip`, `pigz`, `bzip2`, `xz`,
+  `zstd`, with level and threads.
+* *Integrity*: write to `.part` then atomic rename, `.sha256` sidecar
+  (`sha256sum -c` format), 0600 files and 0700 directories, `latest/`
+  link to the newest dump.
+* *Credential hygiene*: no clear-text password in the configuration nor
+  on the command line (`password_env`, `password_file`,
+  `defaults_file`).
+* *Operations*: lock against concurrent runs, `pre`/`post` hooks,
+  `last-run.json` JSON report, monitoring-friendly exit codes.
+
+== Installation
+
+[source,shell]
+----
+git clone git@github.com-aloli:aloli-crystal/jawas.git
+shards build --release --production
+ln -s "$PWD/bin/jawas" ~/bin/jawas
+----
+
+External tools, depending on the engines and compressor in use:
+`mysqldump`/`mariadb-dump`, `pg_dump`/`pg_dumpall`/`psql`, `sqlite3`,
+`gzip`/`pigz`/`bzip2`/`xz`/`zstd`.
+
+== Quick start
+
+[source,shell]
+----
+jawas sample > ~/.config/jawas/config.toml
+jawas check
+jawas backup
+jawas backup --apply
+jawas list
+----
+
+`backup` and `prune` are *dry-run* by default: they show what they
+would do. `--apply` (`-a`) really runs them. Cron example:
+
+[source]
+----
+15 3 * * *  /usr/local/bin/jawas backup --apply --quiet
+----
+
+== Configuration
+
+Lookup order: `--config PATH`,
+`${XDG_CONFIG_HOME:-~/.config}/jawas/config.toml` (skipped with
+`--no-user-config`), `/etc/jawas/config.toml`,
+`/usr/local/etc/jawas/config.toml`. `jawas sample` prints a complete,
+commented template. Unknown keys are rejected (no silent typo).
+
+[source,toml]
+----
+[storage]
+dir = "/var/backups/jawas"
+
+[schedule]
+weekly_day = 6        # Saturday (1 = Monday … 7 = Sunday)
+monthly_day = 1
+
+[retention]           # days
+daily = 7
+weekly = 35
+monthly = 180
+keep_min = 2
+
+[compression]
+tool = "zstd"
+level = 6
+
+[[source]]
+name = "mariadb"
+engine = "mariadb"
+socket = "/run/mysqld/mysqld.sock"
+user = "backup"
+password_file = "/etc/jawas/mariadb.password"
+
+[[source]]
+name = "pg"
+engine = "postgresql"
+socket = "/var/run/postgresql"
+user = "postgres"
+----
+
+== Commands
+
+[cols="1,1,4"]
+|===
+| Command | Short | Purpose
+
+| `backup` | `b` | Dumps, links, rotation, report (dry-run without `--apply`)
+| `prune`  | `p` | Rotation only (dry-run without `--apply`)
+| `list`   | `l` | Inventory of the stored backups
+| `check`  | `c` | Configuration, executables, storage, connections
+| `sample` | `s` | Configuration template
+| `help`   | `h` | Global help or `help <command>`
+|===
+
+Options: `-c/--config`, `-U/--no-user-config`, `-a/--apply`,
+`-s/--source` and `-d/--database` (repeatable or `a,b`),
+`-P/--no-prune`, `-j/--json`, `-q/--quiet`, `-v/--version`,
+`-h/--help`.
+
+Exit codes: `0` success, `1` usage or configuration error, `2` at
+least one database failed, `3` lock held by another run.
+
+== Roadmap
+
+0. *0.2* — `age` encryption (multiple recipients, consistent with
+   `aloli-crystal/secrets`), mail/webhook report notification.
+0. *0.3* — `verify` (SHA-256 sums, archive integrity test) and
+   `restore` (into the original or a throw-away database).
+0. *0.4* — remote upload: SFTP/rsync, S3 object storage (OVH,
+   Scaleway…).
+0. *0.5* — fine-grained GFS retention, monitoring metrics.
+0. Later — "file" sources (rsync, tar archives), beyond databases.
+
+== License
+
+MIT — see `LICENSE`.
