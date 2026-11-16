@@ -9,8 +9,8 @@ compressor, SHA-256 checksums, TOML configuration.
 https://sourceforge.net/projects/automysqlbackup/[automysqlbackup]
 (daily/weekly/monthly rotation, one archive per database, pre/post
 hooks) and widens them: several engines, several servers in one
-configuration, and a roadmap towards `age` encryption, remote upload
-and verified restores.
+configuration, public-key `age` encryption, and a roadmap towards
+verified restores and remote upload.
 
 Version française : link:README.fr.adoc[README.fr.adoc].
 
@@ -124,6 +124,14 @@ in clear. Files get the `.age` extension after the compressor's
 (`app_….daily.sql.zst.age`) and the `.sha256` sum covers the encrypted
 file. `jawas check` makes sure `age` accepts every recipient.
 
+[source,toml]
+----
+[encryption]
+recipients = ["age1…", "ssh-ed25519 AAAA… ops@workstation"]
+recipients_file = "/usr/local/etc/jawas/recipients.txt"   # one key per line
+# binary = "rage"
+----
+
 Create the key pair on the operator's workstation (never on the server),
 then read a backup back:
 
@@ -135,6 +143,24 @@ age -d -i ~/.config/age/jawas.txt app_2026-11-16_03h15.daily.sql.zst.age | zstd 
 
 Keep the private key safe (with a backup copy): without it, encrypted
 backups are lost.
+
+== Storage layout
+
+[source]
+----
+/var/backups/jawas/
+├── mariadb/
+│   ├── daily/app/app_2026-11-16_03h15.daily.sql.zst
+│   ├── daily/app/app_2026-11-16_03h15.daily.sql.zst.sha256
+│   ├── weekly/app/…            (hard links)
+│   ├── monthly/app/…
+│   └── latest/app.sql.zst → ../daily/app/app_2026-11-16_03h15.daily.sql.zst
+├── pg/…
+└── last-run.json
+----
+
+With `[encryption]`, names end in `.age`
+(`app_2026-11-16_03h15.daily.sql.zst.age`, `latest/app.sql.zst.age`).
 
 == Commands
 
@@ -158,6 +184,17 @@ Options: `-c/--config`, `-U/--no-user-config`, `-a/--apply`,
 Exit codes: `0` success, `1` usage or configuration error, `2` at
 least one database failed, `3` lock held by another run.
 
+== Differences from automysqlbackup
+
+* Validated TOML configuration instead of a sourced shell file.
+* One run = a continuous `daily` series; weekly/monthly are hard links
+  instead of separate dumps.
+* Retention with a `keep_min` floor.
+* No password in the configuration (temporary 0600 option file for
+  MySQL, `PGPASSWORD` for PostgreSQL).
+* Public-key `age` encryption instead of shared-password `openssl`.
+* No mail report nor differential mode yet: see the roadmap.
+
 == Roadmap
 
 0. *0.2* — `age` encryption (multiple recipients): shipped.
@@ -168,6 +205,16 @@ least one database failed, `3` lock held by another run.
    Scaleway…).
 0. *0.5* — fine-grained GFS retention, monitoring metrics.
 0. Later — "file" sources (rsync, tar archives), beyond databases.
+
+== Development
+
+[source,shell]
+----
+shards install
+crystal spec
+crystal tool format src/ spec/
+crystal run lib/ameba/bin/ameba.cr -- src spec
+----
 
 == License
 

@@ -10,8 +10,8 @@ compresseur au choix, empreintes SHA-256, configuration TOML.
 https://sourceforge.net/projects/automysqlbackup/[d'automysqlbackup]
 (rotation daily/weekly/monthly, une archive par base, hooks avant/après)
 et les élargit : plusieurs moteurs, plusieurs serveurs dans une même
-configuration, et une feuille de route vers le chiffrement `age`,
-l'envoi distant et la restauration vérifiée.
+configuration, chiffrement `age` à clés publiques, et une feuille de
+route vers la restauration vérifiée et l'envoi distant.
 
 English version: link:README.adoc[README.adoc].
 
@@ -163,6 +163,9 @@ elle, les sauvegardes chiffrées sont perdues.
 ├── pg/…
 └── last-run.json
 ----
+
+Avec `[encryption]`, les noms se terminent par `.age`
+(`app_2026-11-16_03h15.daily.sql.zst.age`, `latest/app.sql.zst.age`).
 
 == Commandes
 

@@ -8,6 +8,15 @@ https://keepachangelog.com/1.1.0/[Keep a Changelog] et le
 versioning suit https://semver.org/[SemVer]
 (3 chiffres pour création, 4 pour portage de gem Ruby).
 
+== v0.2.1 — 2026-11-16
+
+=== Documentation
+
+* Introduction des README à jour (le chiffrement `age` est livré).
+* `README.adoc` aligné sur la version française : exemple
+  `[encryption]` complet, arborescence produite, différences avec
+  automysqlbackup, développement ; nommage `.age` dans l'arborescence.
+
 == v0.2.0 — 2026-11-16
 
 === Ajouté

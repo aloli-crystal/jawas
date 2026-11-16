@@ -1,5 +1,5 @@
 name: jawas
-version: 0.2.0
+version: 0.2.1
 
 description: |
   Swiss-army backup tool: MySQL/MariaDB, PostgreSQL and SQLite dumps
