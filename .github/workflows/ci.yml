@@ -33,7 +33,7 @@ jobs:
 
       # Outils appelés par les specs d'intégration (sinon : pending).
       - name: Install system tools
-        run: apt-get update && apt-get install -y --no-install-recommends sqlite3 zstd
+        run: apt-get update && apt-get install -y --no-install-recommends sqlite3 zstd age
 
       - name: Format check
         run: crystal tool format --check src/ spec/

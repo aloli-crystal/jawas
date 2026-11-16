@@ -14,7 +14,7 @@ and verified restores.
 
 Version française : link:README.fr.adoc[README.fr.adoc].
 
-== Features (0.1.0)
+== Features (0.2.0)
 
 * *Engines*: MySQL and MariaDB (`mysqldump` / `mariadb-dump`),
   PostgreSQL (`pg_dump`, plain SQL or `custom` format, plus roles via
@@ -28,6 +28,10 @@ Version française : link:README.fr.adoc[README.fr.adoc].
   outage can never empty the storage.
 * *Streaming compression*: `none`, `gzip`, `pigz`, `bzip2`, `xz`,
   `zstd`, with level and threads.
+* *`age` encryption* (0.2): after compression, to one or several
+  public keys (`age1…`, `ssh-ed25519`, `ssh-rsa`) inline or in an
+  `age -R` file. The server holds no private key: it cannot read its own
+  backups back.
 * *Integrity*: write to `.part` then atomic rename, `.sha256` sidecar
   (`sha256sum -c` format), 0600 files and 0700 directories, `latest/`
   link to the newest dump.
@@ -48,7 +52,7 @@ ln -s "$PWD/bin/jawas" ~/bin/jawas
 
 External tools, depending on the engines and compressor in use:
 `mysqldump`/`mariadb-dump`, `pg_dump`/`pg_dumpall`/`psql`, `sqlite3`,
-`gzip`/`pigz`/`bzip2`/`xz`/`zstd`.
+`gzip`/`pigz`/`bzip2`/`xz`/`zstd`, and `age` (or `rage`) for encryption.
 
 == Quick start
 
@@ -96,6 +100,9 @@ keep_min = 2
 tool = "zstd"
 level = 6
 
+[encryption]
+recipients = ["age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p"]
+
 [[source]]
 name = "mariadb"
 engine = "mariadb"
@@ -109,6 +116,25 @@ engine = "postgresql"
 socket = "/var/run/postgresql"
 user = "postgres"
 ----
+
+== Encryption and reading back
+
+The `[encryption]` section turns encryption on; without it, backups stay
+in clear. Files get the `.age` extension after the compressor's
+(`app_….daily.sql.zst.age`) and the `.sha256` sum covers the encrypted
+file. `jawas check` makes sure `age` accepts every recipient.
+
+Create the key pair on the operator's workstation (never on the server),
+then read a backup back:
+
+[source,shell]
+----
+age-keygen -o ~/.config/age/jawas.txt
+age -d -i ~/.config/age/jawas.txt app_2026-11-16_03h15.daily.sql.zst.age | zstd -dc > app.sql
+----
+
+Keep the private key safe (with a backup copy): without it, encrypted
+backups are lost.
 
 == Commands
 
@@ -134,10 +160,10 @@ least one database failed, `3` lock held by another run.
 
 == Roadmap
 
-0. *0.2* — `age` encryption (multiple recipients, consistent with
-   `aloli-crystal/secrets`), mail/webhook report notification.
-0. *0.3* — `verify` (SHA-256 sums, archive integrity test) and
-   `restore` (into the original or a throw-away database).
+0. *0.2* — `age` encryption (multiple recipients): shipped.
+0. *0.3* — `verify` (SHA-256 sums, archive integrity test, decryption
+   with a supplied identity) and `restore` (into the original or a
+   throw-away database), mail/webhook report notification.
 0. *0.4* — remote upload: SFTP/rsync, S3 object storage (OVH,
    Scaleway…).
 0. *0.5* — fine-grained GFS retention, monitoring metrics.

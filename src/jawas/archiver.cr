@@ -3,16 +3,23 @@ require "file_utils"
 
 module Jawas
   # Écrit le dump d'une base dans le stockage : flux du moteur →
-  # compresseur → fichier `.part`, renommage atomique, somme SHA-256 au
-  # format `sha256sum`, puis liens vers `weekly`/`monthly` et `latest`.
+  # compresseur → chiffrement age → fichier `.part`, renommage atomique,
+  # somme SHA-256 (du fichier final) au format `sha256sum`, puis liens
+  # vers `weekly`/`monthly` et `latest`.
   class Archiver
-    def initialize(@layout : Layout, @compressor : Compressor, @latest : Bool)
+    def initialize(@layout : Layout, @compressor : Compressor, @latest : Bool,
+                   @encryptor : Encryptor? = nil)
+    end
+
+    # Extension ajoutée à celle du moteur (`.zst.age`, `.gz`…).
+    def suffix : String
+      @compressor.extension + (@encryptor.try(&.extension) || "")
     end
 
     def archive(source : Source, db : String, time : Time, periods : Array(Period)) : DumpResult
       started = Time.instant
       begin
-        ext = source.extension(db) + @compressor.extension
+        ext = source.extension(db) + suffix
         primary = @layout.file_path(source.name, periods.first, db, time, ext)
         FileUtils.mkdir_p(File.dirname(primary), 0o700)
         write(source, db, primary)
@@ -32,12 +39,9 @@ module Jawas
     private def write(source : Source, db : String, target : String) : Nil
       part = "#{target}.part"
       begin
+        filters = [@compressor.filter, @encryptor.try(&.filter)].compact
         File.open(part, "w", perm: 0o600) do |file|
-          if binary = @compressor.binary
-            compress(source, db, file, binary)
-          else
-            source.dump(db, file)
-          end
+          filters.empty? ? source.dump(db, file) : pipe(source, db, filters, file)
         end
         File.rename(part, target)
       ensure
@@ -45,20 +49,48 @@ module Jawas
       end
     end
 
-    private def compress(source : Source, db : String, file : File, binary : String) : Nil
-      err = IO::Memory.new
-      process = Process.new(binary, @compressor.compress_args,
-        input: Process::Redirect::Pipe, output: file, error: err)
-      begin
-        source.dump(db, process.input)
-      ensure
-        process.input.close
-        status = process.wait
+    # Chaîne les filtres : le moteur écrit dans le premier, chacun écrit
+    # dans le suivant, le dernier dans le fichier. Lancés du dernier au
+    # premier ; la copie de l'entrée du suivant gardée par jawas est
+    # refermée aussitôt, sinon il n'en verrait jamais la fin.
+    private def pipe(source : Source, db : String, filters : Array(Filter), file : File) : Nil
+      stages = [] of {Filter, Process, IO::Memory}
+      output = file.as(IO::FileDescriptor)
+      filters.reverse_each do |filter|
+        err = IO::Memory.new
+        process = Process.new(filter.binary, filter.args,
+          input: Process::Redirect::Pipe, output: output, error: err)
+        output.close unless output.same?(file)
+        stages.unshift({filter, process, err})
+        output = process.input
       end
-      return if status.success?
-      raise DumpError.new("#{@compressor.tool} a échoué (code #{status.exit_code}) : #{err.to_s.strip}")
+      begin
+        source.dump(db, output)
+      rescue ex : DumpError | IO::Error
+        output.close
+        # Un filtre mort (destinataire refusé…) fait échouer le moteur
+        # sur un tube cassé : c'est l'erreur du filtre qui compte.
+        raise filter_failure(stages) || ex
+      end
+      output.close
+      if failure = filter_failure(stages)
+        raise failure
+      end
     rescue ex : File::Error
-      raise DumpError.new("#{@compressor.tool} : #{ex.message}")
+      raise DumpError.new(ex.message)
+    end
+
+    # Attend tous les filtres. Quand l'un meurt, ceux d'avant échouent à
+    # leur tour sur un tube cassé : seul le plus en aval est rapporté,
+    # avec la première ligne de son message.
+    private def filter_failure(stages : Array({Filter, Process, IO::Memory})) : DumpError?
+      failures = stages.compact_map do |filter, process, err|
+        status = process.wait
+        next if status.success?
+        detail = err.to_s.lines.map(&.strip).find(&.presence)
+        "#{filter.name} a échoué (code #{status.exit_code})#{detail ? " : #{detail}" : ""}"
+      end
+      DumpError.new(failures.last) unless failures.empty?
     end
 
     private def write_checksum(path : String) : String

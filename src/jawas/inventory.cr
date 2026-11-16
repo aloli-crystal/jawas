@@ -6,6 +6,10 @@ module Jawas
     record Entry, source : String, period : String, database : String, path : String,
       time : Time, size : Int64, checksum : Bool do
       include JSON::Serializable
+
+      def encrypted : Bool
+        path.ends_with?(Encryptor::EXTENSION)
+      end
     end
 
     def self.scan(layout : Layout, sources : Array(String)) : Array(Entry)

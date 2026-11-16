@@ -28,6 +28,11 @@ une base en échec, `3` verrou tenu.
 * `[retention]` : jours par période, `keep_min` sauvegardes toujours
   gardées par base.
 * `[compression]` : `tool`, `level`, `threads`.
+* `[encryption]` (facultatif) : chiffrement `age` après la compression,
+  vers `recipients` (clés publiques `age1…`, `ssh-ed25519`, `ssh-rsa`)
+  et/ou `recipients_file` (format `age -R`) ; `binary` (`age` ou
+  `rage`). Relecture sur le poste de l'opérateur :
+  `age -d -i clé.txt fichier.sql.zst.age | zstd -dc`.
 * `[hooks]` : `pre` (un échec annule), `post` (reçoit `JAWAS_STATUS`
   et `JAWAS_REPORT`).
 * `[[source]]` : `engine` (`mysql`, `mariadb`, `postgresql`,

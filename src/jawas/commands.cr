@@ -34,7 +34,7 @@ module Jawas::CLI
         return 0
       end
       entries.each do |e|
-        mark = e.checksum ? " " : "!"
+        mark = e.checksum ? (e.encrypted ? "🔒" : " ") : "!"
         puts "#{mark} #{e.source.ljust(14)} #{e.period.ljust(8)} #{e.database.ljust(24)} " \
              "#{e.time.to_s("%Y-%m-%d %H:%M")}  #{Jawas.human_size(e.size).rjust(10)}"
       end
@@ -49,6 +49,9 @@ module Jawas::CLI
       failures += check_storage(config.storage.dir)
       if binary = config.compressor.binary
         failures += report_line(Process.find_executable(binary), "compresseur #{binary}")
+      end
+      if encryptor = config.encryptor
+        failures += check_encryption(encryptor)
       end
       runner.selected_sources.each do |source_config|
         failures += check_source(source_config, runner.layout.work_dir)
@@ -75,6 +78,19 @@ module Jawas::CLI
         source.close
       end
       failures
+    end
+
+    private def self.check_encryption(encryptor : Encryptor) : Int32
+      count = encryptor.recipients.size
+      label = "chiffrement #{encryptor.binary_name} : #{count} destinataire(s)" \
+              "#{encryptor.recipients_file.try { |file| " + #{file}" }}"
+      if error = encryptor.self_test
+        puts "✗ #{label} — #{error}"
+        1
+      else
+        puts "✓ #{label}"
+        0
+      end
     end
 
     private def self.check_storage(dir : String) : Int32

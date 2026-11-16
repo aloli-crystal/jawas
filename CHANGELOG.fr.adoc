@@ -8,6 +8,27 @@ https://keepachangelog.com/1.1.0/[Keep a Changelog] et le
 versioning suit https://semver.org/[SemVer]
 (3 chiffres pour création, 4 pour portage de gem Ruby).
 
+== v0.2.0 — 2026-11-16
+
+=== Ajouté
+
+* Chiffrement `age` des sauvegardes (section `[encryption]`) : après la
+  compression, vers des clés publiques `age1…`, `ssh-ed25519` ou
+  `ssh-rsa` (`recipients`) et/ou un fichier au format `age -R`
+  (`recipients_file`) ; `binary = "rage"` possible. Extension `.age`,
+  somme `.sha256` du fichier chiffré.
+* `jawas check` vérifie que `age` accepte chaque destinataire ; `jawas
+  list` signale les sauvegardes chiffrées ; modèle `jawas sample`
+  complété.
+
+=== Modifié
+
+* Le flux de sauvegarde chaîne désormais plusieurs filtres (compression
+  puis chiffrement) ; en cas d'échec, seul le filtre le plus en aval est
+  rapporté (plus de « Broken pipe » trompeur).
+* Une clé privée `AGE-SECRET-KEY-…` placée par erreur dans la
+  configuration est refusée.
+
 == v0.1.0 — 2026-11-16
 
 === Ajouté

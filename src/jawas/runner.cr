@@ -53,7 +53,7 @@ module Jawas
         write_report(report)
         return
       end
-      archiver = Archiver.new(@layout, @config.compressor, @config.storage.latest)
+      archiver = Archiver.new(@layout, @config.compressor, @config.storage.latest, @config.encryptor)
       each_database(report) do |source, db|
         @log.puts "→ #{source.name}/#{db}"
         result = archiver.archive(source, db, now, periods)
@@ -73,8 +73,9 @@ module Jawas
     # Dry-run : liste les bases (connexion en lecture seule) et les
     # fichiers que la rotation supprimerait.
     private def plan(report : Report, periods : Array(Period), now : Time, prune : Bool) : Nil
+      suffix = Archiver.new(@layout, @config.compressor, false, @config.encryptor).suffix
       each_database(report) do |source, db|
-        ext = source.extension(db) + @config.compressor.extension
+        ext = source.extension(db) + suffix
         path = @layout.file_path(source.name, periods.first, db, now, ext)
         report.dumps << DumpResult.new(source.name, db, periods.map(&.dirname), path)
       end

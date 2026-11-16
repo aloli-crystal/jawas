@@ -56,6 +56,13 @@ module Jawas
       args
     end
 
+    # Étape de compression du flux, nil pour `none`.
+    def filter : Filter?
+      if bin = binary
+        Filter.new(@tool, Process.find_executable(bin) || raise(DumpError.new("compresseur introuvable : #{bin}")), compress_args)
+      end
+    end
+
     # Arguments de décompression vers stdout.
     def decompress_args : Array(String)
       @tool == "zstd" ? ["-d", "-q", "-c"] : ["-d", "-c"]
@@ -68,6 +75,7 @@ module Jawas
 
     # Retrouve le compresseur d'un fichier d'après son extension.
     def self.for_path(path : String) : Compressor
+      path = path.rchop(Encryptor::EXTENSION)
       tool = case path
              when .ends_with?(".gz")  then "gzip"
              when .ends_with?(".bz2") then "bzip2"

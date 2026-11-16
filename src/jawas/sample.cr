@@ -23,6 +23,13 @@ module Jawas
     level = 6
     threads = 0                  # 0 = automatique (pigz, xz, zstd)
 
+    # Chiffrement age (facultatif) : clés PUBLIQUES seulement, la clé privée
+    # reste chez vous. Section absente = sauvegardes en clair.
+    # [encryption]
+    # recipients = ["age1…"]                         # ou clés ssh-ed25519 / ssh-rsa
+    # recipients_file = "/usr/local/etc/jawas/recipients.txt"   # format age -R
+    # binary = "age"                                 # ou "rage"
+
     [hooks]
     pre = []                     # ex. ["systemctl stop app-worker"]
     post = []                    # reçoivent JAWAS_STATUS (ok/failed) et JAWAS_REPORT

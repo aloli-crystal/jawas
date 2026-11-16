@@ -81,10 +81,12 @@ module Jawas
     getter schedule : Schedule
     getter retention : Retention
     getter compressor : Compressor
+    getter encryptor : Encryptor?
     getter hooks : Hooks
     getter sources : Array(SourceConfig)
 
-    def initialize(@storage, @schedule, @retention, @compressor, @hooks, @sources, @path = nil)
+    def initialize(@storage, @schedule, @retention, @compressor, @hooks, @sources, @path = nil,
+                   @encryptor = nil)
       validate!
     end
 
@@ -231,8 +233,8 @@ module Jawas
       end
 
       def build : Config
-        check_keys(@root, %w[storage schedule retention compression hooks source])
-        Config.new(storage, schedule, retention, compressor, hooks, sources, @path)
+        check_keys(@root, %w[storage schedule retention compression encryption hooks source])
+        Config.new(storage, schedule, retention, compressor, hooks, sources, @path, encryptor)
       end
 
       private def storage : Storage
@@ -258,6 +260,15 @@ module Jawas
         t = @root.table("compression")
         check_keys(t, %w[tool level threads])
         Compressor.new(t.string("tool", "gzip"), t.int?("level"), t.int?("threads"))
+      end
+
+      # Section absente : pas de chiffrement. Présente : au moins un
+      # destinataire (en ligne ou par fichier).
+      private def encryptor : Encryptor?
+        return unless @root.hash.has_key?("encryption")
+        t = @root.table("encryption")
+        check_keys(t, %w[recipients recipients_file binary])
+        Encryptor.new(t.strings("recipients"), t.string?("recipients_file"), t.string("binary", "age"))
       end
 
       private def hooks : Hooks

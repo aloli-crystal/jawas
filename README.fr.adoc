@@ -15,7 +15,7 @@ l'envoi distant et la restauration vérifiée.
 
 English version: link:README.adoc[README.adoc].
 
-== Fonctionnalités (0.1.0)
+== Fonctionnalités (0.2.0)
 
 * *Moteurs* : MySQL et MariaDB (`mysqldump` / `mariadb-dump`),
   PostgreSQL (`pg_dump`, SQL ou format `custom`, plus les rôles via
@@ -29,6 +29,10 @@ English version: link:README.adoc[README.adoc].
   qui empêche une panne prolongée de vider le stockage.
 * *Compression* en flux : `none`, `gzip`, `pigz`, `bzip2`, `xz`,
   `zstd`, avec niveau et threads.
+* *Chiffrement* `age` (0.2) : après la compression, vers une ou
+  plusieurs clés publiques (`age1…`, `ssh-ed25519`, `ssh-rsa`) en ligne
+  ou dans un fichier `age -R`. Le serveur ne détient aucune clé privée :
+  il ne peut pas relire ses propres sauvegardes.
 * *Intégrité* : écriture dans un `.part` puis renommage atomique,
   fichier `.sha256` (format `sha256sum -c`), fichiers en 0600 et
   répertoires en 0700, lien `latest/` vers le dernier dump.
@@ -50,7 +54,7 @@ ln -s "$PWD/bin/jawas" ~/bin/jawas
 
 Outils externes, selon les moteurs et le compresseur utilisés :
 `mysqldump`/`mariadb-dump`, `pg_dump`/`pg_dumpall`/`psql`, `sqlite3`,
-`gzip`/`pigz`/`bzip2`/`xz`/`zstd`.
+`gzip`/`pigz`/`bzip2`/`xz`/`zstd`, et `age` (ou `rage`) pour le chiffrement.
 
 == Démarrage rapide
 
@@ -100,6 +104,9 @@ keep_min = 2
 tool = "zstd"
 level = 6
 
+[encryption]
+recipients = ["age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p"]
+
 [[source]]
 name = "mariadb"
 engine = "mariadb"
@@ -113,6 +120,34 @@ engine = "postgresql"
 socket = "/var/run/postgresql"
 user = "postgres"
 ----
+
+== Chiffrement et relecture
+
+La section `[encryption]` active le chiffrement ; sans elle, les
+sauvegardes restent en clair. Les fichiers prennent l'extension `.age`
+après celle du compresseur (`app_….daily.sql.zst.age`) et la somme
+`.sha256` porte sur le fichier chiffré. `jawas check` vérifie que `age`
+accepte chaque destinataire.
+
+[source,toml]
+----
+[encryption]
+recipients = ["age1…", "ssh-ed25519 AAAA… ops@poste"]
+recipients_file = "/usr/local/etc/jawas/recipients.txt"   # une clé par ligne
+# binary = "rage"
+----
+
+Créer la paire de clés sur le poste de l'opérateur (jamais sur le
+serveur), puis relire une sauvegarde :
+
+[source,shell]
+----
+age-keygen -o ~/.config/age/jawas.txt
+age -d -i ~/.config/age/jawas.txt app_2026-11-16_03h15.daily.sql.zst.age | zstd -dc > app.sql
+----
+
+Conservez la clé privée en lieu sûr (et une copie de secours) : sans
+elle, les sauvegardes chiffrées sont perdues.
 
 == Arborescence produite
 
@@ -159,15 +194,17 @@ une base en échec, `3` verrou tenu par une autre exécution.
 * Rétention avec plancher `keep_min`.
 * Pas de mot de passe dans la configuration (fichier d'options 0600
   temporaire pour MySQL, `PGPASSWORD` pour PostgreSQL).
+* Chiffrement `age` à clés publiques au lieu d'`openssl` à mot de
+  passe partagé.
 * Pas encore d'envoi de rapport par mail ni de mode différentiel :
   voir la feuille de route.
 
 == Feuille de route
 
-0. *0.2* — chiffrement `age` (destinataires multiples, cohérent avec
-   `aloli-crystal/secrets`), notification mail/webhook du rapport.
-0. *0.3* — `verify` (sommes SHA-256, test d'intégrité de l'archive) et
-   `restore` (dans la base d'origine ou une base jetable).
+0. *0.2* — chiffrement `age` (destinataires multiples) : livré.
+0. *0.3* — `verify` (sommes SHA-256, test d'intégrité de l'archive,
+   déchiffrement avec une identité fournie) et `restore` (dans la base
+   d'origine ou une base jetable), notification mail/webhook du rapport.
 0. *0.4* — envoi distant : SFTP/rsync, stockage objet S3 (OVH,
    Scaleway…).
 0. *0.5* — politique de rétention GFS fine, métriques pour la

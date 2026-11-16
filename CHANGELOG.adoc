@@ -8,6 +8,26 @@ https://keepachangelog.com/1.1.0/[Keep a Changelog] and
 versioning follows https://semver.org/[SemVer]
 (3-digit for creations, 4-digit for ports of Ruby gems).
 
+== v0.2.0 — 2026-11-16
+
+=== Added
+
+* `age` encryption of backups (`[encryption]` section): after
+  compression, to `age1…`, `ssh-ed25519` or `ssh-rsa` public keys
+  (`recipients`) and/or an `age -R` file (`recipients_file`);
+  `binary = "rage"` supported. `.age` extension, `.sha256` sum of the
+  encrypted file.
+* `jawas check` makes sure `age` accepts every recipient; `jawas list`
+  flags encrypted backups; `jawas sample` template extended.
+
+=== Changed
+
+* The backup stream now chains several filters (compression then
+  encryption); on failure only the most downstream filter is reported
+  (no more misleading "Broken pipe").
+* An `AGE-SECRET-KEY-…` private key put in the configuration by mistake
+  is rejected.
+
 == v0.1.0 — 2026-11-16
 
 === Added
