@@ -42,6 +42,50 @@ module Jawas::Sources
       args << "--databases" << db
     end
 
+    def target_exists?(target : String) : Bool
+      validate_target(target)
+      sql = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '#{target}'"
+      !query(sql).strip.empty?
+    end
+
+    def prepare_target(target : String, replace : Bool) : Nil
+      validate_target(target)
+      query("DROP DATABASE IF EXISTS `#{target}`") if replace
+      query("CREATE DATABASE `#{target}` CHARACTER SET utf8mb4")
+    end
+
+    def drop_target(target : String) : Nil
+      validate_target(target)
+      query("DROP DATABASE IF EXISTS `#{target}`")
+    end
+
+    # Les dumps (`--databases`) commencent par `CREATE DATABASE` et
+    # `USE \`base\`` : ces deux lignes d'en-tête sont retirées pour que le
+    # chargement aille dans la cible choisie. Le reste passe tel quel.
+    def restore_from(target : String, format : String, input : IO) : Nil
+      validate_target(target)
+      feed!(client_binary, connection_args + ["--database=#{target}"]) do |sink|
+        MySQL.strip_database_header(input, sink)
+      end
+    end
+
+    # Recopie le dump en retirant `CREATE DATABASE` et `USE` de l'en-tête
+    # (lignes avant la première table ou donnée) ; le reste est copié
+    # en bloc, sans découpage en lignes.
+    def self.strip_database_header(input : IO, output : IO) : Nil
+      while line = input.gets(chomp: false)
+        next if line.starts_with?("CREATE DATABASE ") || line.starts_with?("USE `")
+        output << line
+        break if line.starts_with?("CREATE TABLE") || line.starts_with?("DROP TABLE") ||
+                 line.starts_with?("INSERT ") || line.starts_with?("LOCK TABLES")
+      end
+      IO.copy(input, output)
+    end
+
+    private def query(sql : String) : String
+      capture!(client_binary, connection_args + ["--batch", "--skip-column-names", "-e", sql])
+    end
+
     def close : Nil
       if file = @options_file
         File.delete?(file)

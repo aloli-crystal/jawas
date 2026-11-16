@@ -14,6 +14,9 @@ require "./jawas/archiver"
 require "./jawas/retention"
 require "./jawas/runner"
 require "./jawas/inventory"
+require "./jawas/decoder"
+require "./jawas/verifier"
+require "./jawas/restorer"
 require "./jawas/sample"
 
 # Couteau suisse de sauvegarde : dumps MySQL/MariaDB, PostgreSQL et

@@ -42,6 +42,73 @@ module Jawas::CLI
       0
     end
 
+    def self.verify(runner : Runner, options : Options) : Int32
+      entries = Inventory.scan(runner.layout, runner.selected_sources.map(&.name))
+      unless options.databases.empty?
+        wanted = options.databases.map { |db| Layout.safe(db) }
+        entries.select! { |e| wanted.includes?(e.database) }
+      end
+      entries = Inventory.latest(entries) unless options.all?
+      engines = runner.selected_sources.to_h { |source| {source.name, source.engine} }
+      verifier = Verifier.new(options.identity, runner.layout.work_dir,
+        runner.config.encryptor.try(&.binary_name) || "age")
+      results = entries.map { |e| verifier.verify(e.path, e.source, e.database, engines[e.source]?) }
+      if options.json?
+        puts results.to_pretty_json
+      else
+        print_verify(results, options.quiet?)
+      end
+      results.all?(&.ok?) ? 0 : 2
+    end
+
+    def self.restore(runner : Runner, options : Options) : Int32
+      if options.sources.size > 1 || options.databases.size > 1
+        raise UsageError.new("restore : une seule source et une seule base à la fois")
+      end
+      restorer = Restorer.new(runner.config, options.identity, options.quiet? ? IO::Memory.new : STDERR)
+      plan = restorer.plan(options.sources.first?, options.databases.first?, options.file, options.date,
+        options.into, options.replace?)
+      if options.json? && !options.apply?
+        puts plan.to_pretty_json
+        return 0
+      end
+      print_plan(plan)
+      unless options.apply?
+        puts dry_run_hint
+        return 0
+      end
+      restorer.run(plan)
+      puts "✓ #{plan.source}/#{plan.database} restaurée dans #{plan.target}"
+      0
+    rescue ex : DumpError
+      puts "✗ restauration : #{ex.message}"
+      2
+    end
+
+    private def self.print_plan(plan : Restorer::Plan) : Nil
+      puts "Sauvegarde : #{plan.path}"
+      puts "Cible      : #{plan.target}#{plan.exists? ? " (existe, sera ÉCRASÉE)" : " (sera créée)"}"
+      puts "⚠ la cible est la base d'origine" if plan.original?
+      if plan.exists? && plan.replace? && !plan.atomic?
+        puts "  (la base est supprimée puis recréée : en cas d'échec du chargement, elle reste vide ou partielle ;"
+        puts "   restaurez d'abord dans une base jetable pour vérifier)"
+      end
+    end
+
+    private def self.print_verify(results : Array(Verifier::Result), quiet : Bool) : Nil
+      results.each do |result|
+        next if quiet && result.ok?
+        mark = result.ok? ? (result.complete? ? "✓" : "·") : "✗"
+        puts "#{mark} #{result.source}/#{result.database}  empreinte #{result.checksum}, archive #{result.archive}, contenu #{result.content}" \
+             "#{result.detail ? " — #{result.detail}" : ""}"
+        puts "    #{result.path}" unless result.ok?
+      end
+      failed = results.count { |result| !result.ok? }
+      partial = results.count { |result| result.ok? && !result.complete? }
+      puts "#{results.size} sauvegarde(s) : #{results.size - failed - partial} complète(s), " \
+           "#{partial} partielle(s), #{failed} en échec" unless quiet && failed.zero?
+    end
+
     def self.check(runner : Runner, options : Options) : Int32
       failures = 0
       config = runner.config

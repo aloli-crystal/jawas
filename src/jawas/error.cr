@@ -12,6 +12,11 @@ module Jawas
   class DumpError < Error
   end
 
+  # Demande incohérente (sélection ambiguë, cible existante sans
+  # --replace…) : rien n'a été fait.
+  class UsageError < Error
+  end
+
   # Une autre exécution de jawas tient déjà le verrou du répertoire de
   # stockage.
   class LockError < Error

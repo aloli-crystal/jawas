@@ -93,7 +93,8 @@ module Jawas
       DumpError.new(failures.last) unless failures.empty?
     end
 
-    private def write_checksum(path : String) : String
+    # Empreinte SHA-256 (hexadécimale) d'un fichier, lu par blocs.
+    def self.sha256(path : String) : String
       digest = Digest::SHA256.new
       File.open(path) do |file|
         buffer = Bytes.new(64 * 1024)
@@ -101,7 +102,11 @@ module Jawas
           digest.update(buffer[0, n])
         end
       end
-      hex = digest.final.hexstring
+      digest.final.hexstring
+    end
+
+    private def write_checksum(path : String) : String
+      hex = Archiver.sha256(path)
       File.write("#{path}.sha256", "#{hex}  #{File.basename(path)}\n", perm: 0o600)
       hex
     end

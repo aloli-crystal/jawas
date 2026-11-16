@@ -10,12 +10,13 @@ compresseur au choix, empreintes SHA-256, configuration TOML.
 https://sourceforge.net/projects/automysqlbackup/[d'automysqlbackup]
 (rotation daily/weekly/monthly, une archive par base, hooks avant/après)
 et les élargit : plusieurs moteurs, plusieurs serveurs dans une même
-configuration, chiffrement `age` à clés publiques, et une feuille de
-route vers la restauration vérifiée et l'envoi distant.
+configuration, chiffrement `age` à clés publiques, vérification et
+restauration des sauvegardes, et une feuille de route vers l'envoi
+distant.
 
 English version: link:README.adoc[README.adoc].
 
-== Fonctionnalités (0.2.0)
+== Fonctionnalités (0.3.0)
 
 * *Moteurs* : MySQL et MariaDB (`mysqldump` / `mariadb-dump`),
   PostgreSQL (`pg_dump`, SQL ou format `custom`, plus les rôles via
@@ -33,6 +34,9 @@ English version: link:README.adoc[README.adoc].
   plusieurs clés publiques (`age1…`, `ssh-ed25519`, `ssh-rsa`) en ligne
   ou dans un fichier `age -R`. Le serveur ne détient aucune clé privée :
   il ne peut pas relire ses propres sauvegardes.
+* *Vérification et restauration* (0.3) : `verify` contrôle empreinte,
+  archive et contenu ; `restore` recharge une sauvegarde, par défaut
+  dans une base jetable.
 * *Intégrité* : écriture dans un `.part` puis renommage atomique,
   fichier `.sha256` (format `sha256sum -c`), fichiers en 0600 et
   répertoires en 0700, lien `latest/` vers le dernier dump.
@@ -149,6 +153,61 @@ age -d -i ~/.config/age/jawas.txt app_2026-11-16_03h15.daily.sql.zst.age | zstd 
 Conservez la clé privée en lieu sûr (et une copie de secours) : sans
 elle, les sauvegardes chiffrées sont perdues.
 
+== Vérification et restauration
+
+`jawas verify` contrôle, par défaut, la dernière sauvegarde de chaque
+base (`-A` : toutes), à trois niveaux :
+
+0. *empreinte* : le fichier correspond à son `.sha256` ;
+0. *archive* : il se déchiffre (avec `-i`) et se décompresse jusqu'au
+   bout ;
+0. *contenu* : le dump est complet (marque de fin de `mysqldump` ou de
+   `pg_dump`, en-tête `PGDMP`, `COMMIT;` final ou
+   `PRAGMA integrity_check` pour SQLite).
+
+Sans `-i`, une sauvegarde chiffrée n'est contrôlée que sur son
+empreinte (« partielle »). Le code de sortie vaut `2` si un contrôle
+échoue : `jawas verify -q` se prête à une tâche planifiée.
+
+[source,shell]
+----
+jawas verify
+jawas verify -A -i ~/.config/age/jawas.txt
+----
+
+`jawas restore` recharge une sauvegarde. Sans `--apply`, il affiche la
+sauvegarde choisie et la cible. Par défaut :
+
+* la sauvegarde est la plus récente de la base (`-D AAAA-MM-JJ` : la
+  plus récente de ce jour ; `-f` : un fichier précis) ;
+* la cible est une *base jetable* `<base>_r<AAAAMMJJHHMM>` sur le même
+  serveur (SQLite : fichier voisin `<base>.r<AAAAMMJJHHMM>.sqlite3`),
+  à inspecter puis supprimer.
+
+[source,shell]
+----
+jawas restore -d app
+jawas restore -d app --apply
+jawas restore -s pg -d app -D 2026-11-14 -t app_hier --apply
+jawas restore -d app -t app -R -i ~/.config/age/jawas.txt --apply
+----
+
+Garde-fous :
+
+* l'empreinte SHA-256 est contrôlée avant tout chargement ;
+* une cible existante n'est écrasée qu'avec `-R/--replace` ; écraser la
+  base d'origine exige donc `-t <base> -R --apply`. Pour MySQL et
+  PostgreSQL, la base est supprimée puis recréée : restaurez d'abord
+  dans une base jetable pour vérifier. SQLite est remplacé d'un bloc
+  (fichier renommé après `PRAGMA integrity_check`) ;
+* une base jetable créée pour une restauration qui échoue est supprimée ;
+* `_globals` (rôles PostgreSQL) se rejoue à la main : décoder le
+  fichier, puis `psql -d postgres -f -`.
+
+Le chargement passe par `mysql`/`mariadb` (en-tête `CREATE DATABASE`
+et `USE` retiré pour viser la cible), `psql -v ON_ERROR_STOP=1` ou
+`pg_restore --exit-on-error`, et `sqlite3`.
+
 == Arborescence produite
 
 [source]
@@ -175,7 +234,9 @@ Avec `[encryption]`, les noms se terminent par `.age`
 
 | `backup` | `b` | Dumps, liens, rotation, rapport (dry-run sans `--apply`)
 | `prune`  | `p` | Rotation seule (dry-run sans `--apply`)
-| `list`   | `l` | Inventaire des sauvegardes du stockage
+| `list`    | `l` | Inventaire des sauvegardes du stockage
+| `verify`  | `v` | Contrôle empreinte, archive et contenu
+| `restore` | `r` | Restauration, base jetable par défaut (dry-run sans `--apply`)
 | `check`  | `c` | Configuration, exécutables, stockage, connexions
 | `sample` | `s` | Modèle de configuration
 | `help`   | `h` | Aide globale ou `help <commande>`
@@ -184,7 +245,9 @@ Avec `[encryption]`, les noms se terminent par `.age`
 Options : `-c/--config`, `-U/--no-user-config`, `-a/--apply`,
 `-s/--source` et `-d/--database` (répétables ou `a,b`),
 `-P/--no-prune`, `-j/--json`, `-q/--quiet`, `-v/--version`,
-`-h/--help`.
+`-h/--help` ; pour `verify` et `restore` : `-i/--identity` (clé privée
+age), `-A/--all`, `-D/--date`, `-f/--file`, `-t/--into`,
+`-R/--replace`.
 
 Codes de sortie : `0` succès, `1` usage ou configuration, `2` au moins
 une base en échec, `3` verrou tenu par une autre exécution.
@@ -205,11 +268,9 @@ une base en échec, `3` verrou tenu par une autre exécution.
 == Feuille de route
 
 0. *0.2* — chiffrement `age` (destinataires multiples) : livré.
-0. *0.3* — `verify` (sommes SHA-256, test d'intégrité de l'archive,
-   déchiffrement avec une identité fournie) et `restore` (dans la base
-   d'origine ou une base jetable), notification mail/webhook du rapport.
-0. *0.4* — envoi distant : SFTP/rsync, stockage objet S3 (OVH,
-   Scaleway…).
+0. *0.3* — `verify` et `restore` : livrés.
+0. *0.4* — envoi distant (SFTP/rsync, stockage objet S3 : OVH,
+   Scaleway…), notification mail/webhook du rapport.
 0. *0.5* — politique de rétention GFS fine, métriques pour la
    supervision.
 0. Ensuite — sources « fichiers » (rsync, archives tar), au-delà des

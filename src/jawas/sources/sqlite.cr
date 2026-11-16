@@ -48,6 +48,49 @@ module Jawas::Sources
       end
     end
 
+    # Fichier voisin de l'original : `<base>.r<AAAAMMJJHHMM>.sqlite3`.
+    def default_target(db : String, time : Time) : String
+      File.join(File.dirname(path_for(db)), "#{Layout.safe(db)}.r#{time.to_s("%Y%m%d%H%M")}.sqlite3")
+    end
+
+    # La cible est un chemin de fichier.
+    def validate_target(target : String) : Nil
+      return if Dir.exists?(File.dirname(File.expand_path(target)))
+      raise UsageError.new("répertoire de la cible introuvable : #{File.dirname(target)}")
+    end
+
+    def target_exists?(target : String) : Bool
+      File.exists?(target)
+    end
+
+    # Rien à créer : le fichier est remplacé d'un bloc par `restore_from`.
+    def prepare_target(target : String, replace : Bool) : Nil
+      validate_target(target)
+    end
+
+    def drop_target(target : String) : Nil
+    end
+
+    # Écrit la base dans un fichier temporaire voisin, vérifie
+    # `PRAGMA integrity_check`, puis le renomme sur la cible (atomique :
+    # la cible n'est jamais à moitié écrite).
+    def restore_from(target : String, format : String, input : IO) : Nil
+      validate_target(target)
+      tmp = File.tempname(".jawas-restore-", ".sqlite3", dir: File.dirname(File.expand_path(target)))
+      begin
+        if format == ".sql"
+          feed!(binary, ["-bail", tmp]) { |sink| IO.copy(input, sink) }
+        else
+          File.open(tmp, "w", perm: 0o600) { |file| IO.copy(input, file) }
+        end
+        verdict = capture!(binary, [tmp, "PRAGMA integrity_check"]).strip
+        raise DumpError.new("integrity_check : #{verdict.lines.first?}") unless verdict == "ok"
+        File.rename(tmp, target)
+      ensure
+        File.delete?(tmp)
+      end
+    end
+
     def db_name(path : String) : String
       File.basename(path).sub(/\.(sqlite3?|db3?)\z/, "")
     end

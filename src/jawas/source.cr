@@ -44,8 +44,44 @@ module Jawas
     # Exécutables nécessaires (pour `jawas check`).
     abstract def binaries : Array(String)
 
+    # --- Restauration -------------------------------------------------
+
+    # Nom de la base jetable par défaut : `<base>_r<AAAAMMJJHHMM>` de la
+    # sauvegarde (SQLite : fichier voisin de l'original).
+    def default_target(db : String, time : Time) : String
+      stamp = time.to_s("%Y%m%d%H%M")
+      "#{Layout.safe(db)[0, 63 - 2 - stamp.size]}_r#{stamp}"
+    end
+
+    # Refuse un nom de cible qu'il faudrait échapper.
+    def validate_target(target : String) : Nil
+      return if target.matches?(/\A[A-Za-z0-9_][A-Za-z0-9_$-]{0,62}\z/)
+      raise UsageError.new("nom de base cible invalide : « #{target} » ([A-Za-z0-9_$-], 63 caractères au plus)")
+    end
+
+    # La cible existe-t-elle déjà ?
+    abstract def target_exists?(target : String) : Bool
+
+    # Crée la cible (après l'avoir supprimée si `replace`).
+    abstract def prepare_target(target : String, replace : Bool) : Nil
+
+    # Supprime une cible créée par une restauration qui a échoué.
+    abstract def drop_target(target : String) : Nil
+
+    # Charge le dump décodé (`format` : `.sql`, `.pgdump`, `.sqlite3`)
+    # dans la cible.
+    abstract def restore_from(target : String, format : String, input : IO) : Nil
+
     # Libère les ressources temporaires (fichier d'options…).
     def close : Nil
+    end
+
+    # Résumé de la sortie d'erreur d'un outil : les lignes qui signalent
+    # une erreur si elles existent, sinon les dernières lignes.
+    def self.error_summary(stderr : String) : String
+      lines = stderr.lines.map(&.strip).reject { |line| line.empty? || line.matches?(/\A-+\z/) }
+      errors = lines.select(&.matches?(/error|fatal|erreur/i))
+      (errors.empty? ? lines.last(3) : errors.last(2)).join(" / ")
     end
 
     protected def find_binary(configured : String?, candidates : Array(String)) : String
@@ -66,10 +102,37 @@ module Jawas
       err = IO::Memory.new
       status = Process.run(binary, args, output: output, error: err, env: env)
       return if status.success?
-      message = err.to_s.strip.lines.last(5).join(" / ")
+      message = Source.error_summary(err.to_s)
       raise DumpError.new("#{File.basename(binary)} a échoué (code #{status.exit_code})#{message.empty? ? "" : " : #{message}"}")
     rescue ex : File::Error | IO::Error
       raise DumpError.new("#{File.basename(binary)} : #{ex.message}")
+    end
+
+    # Lance `binary` et lui fait lire ce que le bloc écrit. Si le
+    # programme s'arrête en route, c'est son propre message d'erreur qui
+    # est rapporté, pas le « Broken pipe » de l'écriture.
+    protected def feed!(binary : String, args : Array(String), env : Process::Env = nil, & : IO ->) : Nil
+      err = IO::Memory.new
+      File.open(File::NULL, "w") do |null|
+        process = Process.new(binary, args, input: Process::Redirect::Pipe, output: null, error: err, env: env)
+        write_error = nil
+        begin
+          yield process.input
+        rescue ex : IO::Error
+          write_error = ex
+        ensure
+          begin
+            process.input.close
+          rescue IO::Error
+          end
+        end
+        status = process.wait
+        unless status.success?
+          message = Source.error_summary(err.to_s)
+          raise DumpError.new("#{File.basename(binary)} a échoué (code #{status.exit_code})#{message.empty? ? "" : " : #{message}"}")
+        end
+        raise DumpError.new("#{File.basename(binary)} : #{write_error.message}") if write_error
+      end
     end
 
     protected def capture!(binary : String, args : Array(String), env : Process::Env = nil) : String

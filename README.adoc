@@ -9,12 +9,12 @@ compressor, SHA-256 checksums, TOML configuration.
 https://sourceforge.net/projects/automysqlbackup/[automysqlbackup]
 (daily/weekly/monthly rotation, one archive per database, pre/post
 hooks) and widens them: several engines, several servers in one
-configuration, public-key `age` encryption, and a roadmap towards
-verified restores and remote upload.
+configuration, public-key `age` encryption, backup verification and
+restore, and a roadmap towards remote upload.
 
 Version française : link:README.fr.adoc[README.fr.adoc].
 
-== Features (0.2.0)
+== Features (0.3.0)
 
 * *Engines*: MySQL and MariaDB (`mysqldump` / `mariadb-dump`),
   PostgreSQL (`pg_dump`, plain SQL or `custom` format, plus roles via
@@ -32,6 +32,9 @@ Version française : link:README.fr.adoc[README.fr.adoc].
   public keys (`age1…`, `ssh-ed25519`, `ssh-rsa`) inline or in an
   `age -R` file. The server holds no private key: it cannot read its own
   backups back.
+* *Verification and restore* (0.3): `verify` checks checksum, archive
+  and content; `restore` loads a backup back, into a throw-away
+  database by default.
 * *Integrity*: write to `.part` then atomic rename, `.sha256` sidecar
   (`sha256sum -c` format), 0600 files and 0700 directories, `latest/`
   link to the newest dump.
@@ -144,6 +147,60 @@ age -d -i ~/.config/age/jawas.txt app_2026-11-16_03h15.daily.sql.zst.age | zstd 
 Keep the private key safe (with a backup copy): without it, encrypted
 backups are lost.
 
+== Verification and restore
+
+`jawas verify` checks, by default, the latest backup of each database
+(`-A`: all of them), on three levels:
+
+0. *checksum*: the file matches its `.sha256`;
+0. *archive*: it decrypts (with `-i`) and decompresses to the end;
+0. *content*: the dump is complete (`mysqldump` or `pg_dump` end
+   marker, `PGDMP` header, final `COMMIT;` or `PRAGMA integrity_check`
+   for SQLite).
+
+Without `-i`, an encrypted backup is only checked on its checksum
+("partial"). The exit code is `2` when a check fails: `jawas verify -q`
+fits a scheduled job.
+
+[source,shell]
+----
+jawas verify
+jawas verify -A -i ~/.config/age/jawas.txt
+----
+
+`jawas restore` loads a backup back. Without `--apply`, it shows the
+chosen backup and the target. By default:
+
+* the backup is the latest of the database (`-D YYYY-MM-DD`: the latest
+  of that day; `-f`: a given file);
+* the target is a *throw-away database* `<db>_r<YYYYMMDDHHMM>` on the
+  same server (SQLite: sibling file `<db>.r<YYYYMMDDHHMM>.sqlite3`), to
+  inspect then drop.
+
+[source,shell]
+----
+jawas restore -d app
+jawas restore -d app --apply
+jawas restore -s pg -d app -D 2026-11-14 -t app_yesterday --apply
+jawas restore -d app -t app -R -i ~/.config/age/jawas.txt --apply
+----
+
+Safeguards:
+
+* the SHA-256 checksum is checked before anything is loaded;
+* an existing target is only overwritten with `-R/--replace`;
+  overwriting the original database thus takes `-t <db> -R --apply`.
+  For MySQL and PostgreSQL the database is dropped then recreated:
+  restore into a throw-away database first to check. SQLite is replaced
+  in one go (file renamed after `PRAGMA integrity_check`);
+* a throw-away database created for a failed restore is dropped;
+* `_globals` (PostgreSQL roles) is replayed by hand: decode the file,
+  then `psql -d postgres -f -`.
+
+Loading goes through `mysql`/`mariadb` (`CREATE DATABASE` and `USE`
+header removed to aim at the target), `psql -v ON_ERROR_STOP=1` or
+`pg_restore --exit-on-error`, and `sqlite3`.
+
 == Storage layout
 
 [source]
@@ -170,7 +227,9 @@ With `[encryption]`, names end in `.age`
 
 | `backup` | `b` | Dumps, links, rotation, report (dry-run without `--apply`)
 | `prune`  | `p` | Rotation only (dry-run without `--apply`)
-| `list`   | `l` | Inventory of the stored backups
+| `list`    | `l` | Inventory of the stored backups
+| `verify`  | `v` | Checksum, archive and content checks
+| `restore` | `r` | Restore, throw-away database by default (dry-run without `--apply`)
 | `check`  | `c` | Configuration, executables, storage, connections
 | `sample` | `s` | Configuration template
 | `help`   | `h` | Global help or `help <command>`
@@ -179,7 +238,9 @@ With `[encryption]`, names end in `.age`
 Options: `-c/--config`, `-U/--no-user-config`, `-a/--apply`,
 `-s/--source` and `-d/--database` (repeatable or `a,b`),
 `-P/--no-prune`, `-j/--json`, `-q/--quiet`, `-v/--version`,
-`-h/--help`.
+`-h/--help`; for `verify` and `restore`: `-i/--identity` (age private
+key), `-A/--all`, `-D/--date`, `-f/--file`, `-t/--into`,
+`-R/--replace`.
 
 Exit codes: `0` success, `1` usage or configuration error, `2` at
 least one database failed, `3` lock held by another run.
@@ -198,11 +259,9 @@ least one database failed, `3` lock held by another run.
 == Roadmap
 
 0. *0.2* — `age` encryption (multiple recipients): shipped.
-0. *0.3* — `verify` (SHA-256 sums, archive integrity test, decryption
-   with a supplied identity) and `restore` (into the original or a
-   throw-away database), mail/webhook report notification.
-0. *0.4* — remote upload: SFTP/rsync, S3 object storage (OVH,
-   Scaleway…).
+0. *0.3* — `verify` and `restore`: shipped.
+0. *0.4* — remote upload (SFTP/rsync, S3 object storage: OVH,
+   Scaleway…), mail/webhook report notification.
 0. *0.5* — fine-grained GFS retention, monitoring metrics.
 0. Later — "file" sources (rsync, tar archives), beyond databases.
 

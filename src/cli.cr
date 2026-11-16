@@ -15,12 +15,14 @@ require "./jawas"
 
 module Jawas::CLI
   SUBCOMMANDS = {
-    "backup" => "b",
-    "prune"  => "p",
-    "list"   => "l",
-    "check"  => "c",
-    "sample" => "s",
-    "help"   => "h",
+    "backup"  => "b",
+    "prune"   => "p",
+    "list"    => "l",
+    "verify"  => "v",
+    "restore" => "r",
+    "check"   => "c",
+    "sample"  => "s",
+    "help"    => "h",
   }
 
   class Options
@@ -32,6 +34,12 @@ module Jawas::CLI
     property? quiet = false
     property sources = [] of String
     property databases = [] of String
+    property identity : String? = nil
+    property? all = false
+    property date : Time? = nil
+    property file : String? = nil
+    property into : String? = nil
+    property? replace = false
   end
 
   def self.parser(options : Options) : OptionParser
@@ -42,7 +50,9 @@ module Jawas::CLI
         Sous-commandes :
           backup (b)   Sauvegarde les bases puis applique la rotation (dry-run sans --apply)
           prune  (p)   Applique seule la rotation (dry-run sans --apply)
-          list   (l)   Liste les sauvegardes présentes dans le stockage
+          list    (l)  Liste les sauvegardes présentes dans le stockage
+          verify  (v)  Contrôle empreinte, archive et contenu des sauvegardes
+          restore (r)  Restaure une sauvegarde (base jetable par défaut ; dry-run sans --apply)
           check  (c)   Vérifie la configuration, les outils et les connexions
           sample (s)   Affiche un modèle de configuration TOML
           help   (h)   Affiche l'aide (globale ou d'une sous-commande)
@@ -59,6 +69,19 @@ module Jawas::CLI
       op.on("-d BASE", "--database=BASE", "Limite à une base (répétable, ou liste a,b)") do |v|
         options.databases.concat(v.split(',').map(&.strip).reject(&.empty?))
       end
+      op.on("-i FICHIER", "--identity=FICHIER", "verify/restore : clé privée age des sauvegardes chiffrées") do |v|
+        options.identity = v
+      end
+      op.on("-A", "--all", "verify : toutes les sauvegardes (sinon la dernière de chaque base)") { options.all = true }
+      op.on("-D DATE", "--date=DATE", "restore : dernière sauvegarde du jour AAAA-MM-JJ") do |v|
+        options.date = Time.parse(v, "%Y-%m-%d", Time::Location.local)
+      rescue Time::Format::Error
+        STDERR.puts "Date invalide : #{v} (AAAA-MM-JJ attendu)"
+        exit 1
+      end
+      op.on("-f CHEMIN", "--file=CHEMIN", "restore : fichier de sauvegarde précis") { |v| options.file = v }
+      op.on("-t CIBLE", "--into=CIBLE", "restore : base (ou fichier SQLite) cible") { |v| options.into = v }
+      op.on("-R", "--replace", "restore : écrase la cible si elle existe") { options.replace = true }
       op.on("-P", "--no-prune", "backup : ne pas appliquer la rotation") { options.prune = false }
       op.on("-j", "--json", "Sortie JSON") { options.json = true }
       op.on("-q", "--quiet", "N'affiche que les erreurs") { options.quiet = true }
@@ -108,22 +131,31 @@ module Jawas::CLI
       STDERR.puts parser
       1
     else
-      config = Config.load(Config.locate(options.config, options.no_user_config?))
-      log = options.quiet? ? IO::Memory.new : STDERR
-      runner = Runner.new(config, options.sources, options.databases, log)
-      case sub
-      when "backup" then Commands.backup(runner, options)
-      when "prune"  then Commands.prune(runner, options)
-      when "list"   then Commands.list(runner, options)
-      else               Commands.check(runner, options)
-      end
+      dispatch(sub, options)
     end
   rescue ex : ConfigError
     STDERR.puts "Configuration : #{ex.message}"
     1
+  rescue ex : UsageError
+    STDERR.puts "Erreur : #{ex.message}"
+    1
   rescue ex : LockError
     STDERR.puts ex.message
     3
+  end
+
+  def self.dispatch(sub : String, options : Options) : Int32
+    config = Config.load(Config.locate(options.config, options.no_user_config?))
+    log = options.quiet? ? IO::Memory.new : STDERR
+    runner = Runner.new(config, options.sources, options.databases, log)
+    case sub
+    when "backup"  then Commands.backup(runner, options)
+    when "prune"   then Commands.prune(runner, options)
+    when "list"    then Commands.list(runner, options)
+    when "verify"  then Commands.verify(runner, options)
+    when "restore" then Commands.restore(runner, options)
+    else                Commands.check(runner, options)
+    end
   end
 
   def self.help(parser : OptionParser, sub : String?) : Int32
@@ -159,6 +191,20 @@ module Jawas::CLI
     "list" => <<-TXT,
       jawas list [-s SOURCE] [-d BASE] [-j]
         Inventaire du stockage : source, période, base, date, taille, présence du .sha256.
+      TXT
+    "verify" => <<-TXT,
+      jawas verify [-s SOURCE] [-d BASE] [-A] [-i CLÉ] [-j]
+        Sans -A : la dernière sauvegarde de chaque base. Trois niveaux : empreinte .sha256,
+        archive (déchiffrement si -i, décompression complète), contenu (dump terminé,
+        en-tête PGDMP, PRAGMA integrity_check). Sans -i, une sauvegarde chiffrée n'est
+        contrôlée que sur son empreinte. Code 2 si un contrôle échoue.
+      TXT
+    "restore" => <<-TXT,
+      jawas restore -d BASE [-s SOURCE] [-f FICHIER | -D AAAA-MM-JJ] [-t CIBLE] [-R] [-i CLÉ] [-a]
+        Sans --apply : affiche la sauvegarde choisie et la cible. Par défaut, la dernière
+        sauvegarde est chargée dans une base jetable <base>_r<AAAAMMJJHHMM> (SQLite : fichier
+        voisin). Écraser une base existante, l'originale comprise, exige -t NOM et -R.
+        _globals (rôles PostgreSQL) se rejoue à la main.
       TXT
     "check" => <<-TXT,
       jawas check [-s SOURCE]

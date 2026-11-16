@@ -49,6 +49,46 @@ module Jawas::Sources
       args << "--dbname=#{db}"
     end
 
+    def target_exists?(target : String) : Bool
+      validate_target(target)
+      query("SELECT 1 FROM pg_database WHERE datname = '#{target}'").strip == "1"
+    end
+
+    def prepare_target(target : String, replace : Bool) : Nil
+      validate_target(target)
+      query(%(DROP DATABASE IF EXISTS "#{target}")) if replace
+      query(%(CREATE DATABASE "#{target}"))
+    end
+
+    def drop_target(target : String) : Nil
+      validate_target(target)
+      query(%(DROP DATABASE IF EXISTS "#{target}"))
+    end
+
+    # SQL : `psql` arrêté à la première erreur ; format custom :
+    # `pg_restore --exit-on-error` lu sur l'entrée standard.
+    def restore_from(target : String, format : String, input : IO) : Nil
+      validate_target(target)
+      if format == ".pgdump"
+        feed!(restore_binary, connection_args + ["--exit-on-error", "--dbname=#{target}"], env) do |sink|
+          IO.copy(input, sink)
+        end
+      else
+        args = connection_args + ["-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", target]
+        feed!(client_binary, args, env) { |sink| IO.copy(input, sink) }
+      end
+    end
+
+    private def query(sql : String) : String
+      capture!(client_binary, connection_args + ["-X", "-A", "-t", "-d", "postgres", "-c", sql], env)
+    end
+
+    @restore_binary : String?
+
+    private def restore_binary : String
+      @restore_binary ||= sibling("pg_restore")
+    end
+
     # `-w` : jamais d'invite de mot de passe (exécution sous cron).
     private def connection_args : Array(String)
       args = ["-w"]

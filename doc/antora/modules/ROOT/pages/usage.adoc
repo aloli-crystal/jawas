@@ -12,6 +12,10 @@ jawas b -a -s pg -d app,_globals
 jawas prune --apply
 jawas list --json
 jawas check
+jawas verify -A -i ~/.config/age/jawas.txt
+jawas restore -d app                # dry-run : sauvegarde et cible
+jawas restore -d app --apply        # dans la base jetable app_r<AAAAMMJJHHMM>
+jawas restore -d app -t app -R -i ~/.config/age/jawas.txt --apply   # écrase l'originale
 ----
 
 `backup` et `prune` sont en dry-run par défaut ; `--apply` (`-a`)

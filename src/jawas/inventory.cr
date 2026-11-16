@@ -32,6 +32,14 @@ module Jawas
       end
       entries.sort_by! { |e| {e.source, e.period, e.database, e.time} }
     end
+
+    # Sauvegarde la plus récente de chaque base (la copie `daily` quand
+    # weekly/monthly sont des liens du même fichier).
+    def self.latest(entries : Array(Entry)) : Array(Entry)
+      entries.group_by { |e| {e.source, e.database} }
+        .map { |_, list| list.max_by { |e| {e.time, e.period == "daily" ? 1 : 0} } }
+        .sort_by! { |e| {e.source, e.database} }
+    end
   end
 
   # Taille lisible (1 Kio = 1024 octets).

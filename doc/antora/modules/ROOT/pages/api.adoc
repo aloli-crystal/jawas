@@ -8,6 +8,9 @@
 * `Jawas::Archiver` — dump → compression → fichier, SHA-256, liens.
 * `Jawas::Retention` — rotation par période avec plancher `keep_min`.
 * `Jawas::Inventory` — inventaire du stockage.
+* `Jawas::Verifier` — contrôle empreinte, archive, contenu.
+* `Jawas::Restorer` — plan (sauvegarde, cible) et restauration.
+* `Jawas::Decoder` — relecture : `age -d` puis décompression.
 * `Jawas::Encryptor` — chiffrement `age` (destinataires, auto-test).
 * `Jawas::Compressor`, `Jawas::Layout`, `Jawas::Calendar`.
 

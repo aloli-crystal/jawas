@@ -8,6 +8,28 @@ https://keepachangelog.com/1.1.0/[Keep a Changelog] and
 versioning follows https://semver.org/[SemVer]
 (3-digit for creations, 4-digit for ports of Ruby gems).
 
+== v0.3.0 — 2026-11-16
+
+=== Added
+
+* `jawas verify` (`v`): three-level check (`.sha256` checksum, archive
+  decrypted and decompressed, complete content: `mysqldump`/`pg_dump`
+  end marker, `PGDMP` header, SQLite `COMMIT;` or
+  `PRAGMA integrity_check`); latest backup of each database or all
+  (`-A`); exit code 2 on failure.
+* `jawas restore` (`r`): dry-run by default, throw-away database
+  `<db>_r<YYYYMMDDHHMM>` by default, selection by date (`-D`) or file
+  (`-f`), target (`-t`), explicit overwrite (`-R`); MySQL/MariaDB,
+  PostgreSQL (plain and custom), SQLite (atomic replacement).
+* `-i/--identity`: age private key to read encrypted backups back.
+* Safeguards: checksum checked before loading, throw-away database
+  dropped when a restore fails, `_globals` refused (to replay by hand),
+  missing key detected at dry-run time.
+
+=== Changed
+
+* External tool errors summarised to their error lines.
+
 == v0.2.1 — 2026-11-16
 
 === Documentation
