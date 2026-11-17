@@ -141,7 +141,7 @@ module Jawas
     private def write_report(report : Report) : Nil
       File.write(@layout.report_path, report.to_pretty_json + "\n", perm: 0o600)
     rescue ex : File::Error
-      @log.puts "✗ rapport non écrit : #{ex.message}"
+      @log.puts "✗ rapport non écrit : #{Access.describe(ex)}"
     end
 
     private def with_lock(&)

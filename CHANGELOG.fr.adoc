@@ -8,6 +8,25 @@ https://keepachangelog.com/1.1.0/[Keep a Changelog] et le
 versioning suit https://semver.org/[SemVer]
 (3 chiffres pour création, 4 pour portage de gem Ruby).
 
+== v0.4.1 — 2026-11-17
+
+=== Corrigé
+
+* Un répertoire de stockage dont un parent n'est pas traversable (ex.
+  `/var/backups`, `root:wheel 0750` sous FreeBSD, pour
+  `sudo -u postgres`) ne fait plus planter jawas sur une
+  `File::AccessDeniedError` non rattrapée. `jawas check` l'affiche en
+  contrôle échoué ; `backup`, `prune`, `list`, `verify` et `upload`
+  s'arrêtent en code 1 avec un message clair : le chemin, l'utilisateur
+  qui lance jawas et le répertoire parent fautif avec son propriétaire et
+  ses droits. `receive` renvoie cette raison à l'émetteur.
+* Même diagnostic pour `--config`, `password_file` et `recipients_file` :
+  `check` compte un `password_file` illisible comme un échec. Un
+  emplacement de configuration implicite inaccessible (`~/.config` de
+  l'appelant conservé par `sudo`) est passé.
+* Filet de sécurité : plus aucune erreur de fichier ou d'entrée-sortie
+  ne finit en exception non rattrapée (code 1).
+
 == v0.4.0 — 2026-11-16
 
 === Ajouté

@@ -86,7 +86,7 @@ module Jawas
         false
       end
     rescue ex : File::Error | IO::Error
-      result.fail(:checksum, ex.message.to_s)
+      result.fail(:checksum, Access.message(ex))
       false
     end
 
@@ -124,7 +124,7 @@ module Jawas
         result.archive = OK
         check_content(result, format, engine, head, tail.to_s, size, sqlite_copy)
       rescue ex : DumpError | IO::Error | File::Error
-        result.fail(:archive, ex.message.to_s)
+        result.fail(:archive, Access.message(ex))
       ensure
         sqlite_copy.try { |path| File.delete?(path) }
       end

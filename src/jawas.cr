@@ -1,5 +1,6 @@
 require "./jawas/version"
 require "./jawas/error"
+require "./jawas/access"
 require "./jawas/period"
 require "./jawas/encryptor"
 require "./jawas/compressor"

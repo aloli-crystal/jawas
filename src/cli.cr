@@ -155,6 +155,14 @@ module Jawas::CLI
   rescue ex : LockError
     STDERR.puts ex.message
     3
+  rescue ex : File::Error
+    # Filet de sécurité : aucune erreur de fichier ne doit finir en
+    # « Unhandled exception » (stockage, configuration, secrets…).
+    STDERR.puts "Erreur : #{Access.describe(ex)}"
+    1
+  rescue ex : IO::Error
+    STDERR.puts "Erreur d'entrée-sortie : #{ex.message}"
+    1
   end
 
   def self.dispatch(sub : String, options : Options) : Int32

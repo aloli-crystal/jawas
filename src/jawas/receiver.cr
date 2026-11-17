@@ -64,6 +64,10 @@ module Jawas
     rescue ex : LockError
       refuse(ex.message.to_s)
       1
+    rescue ex : File::Error
+      # Stockage distant inaccessible : l'émetteur reçoit la raison.
+      refuse(Access.describe(ex)) rescue nil
+      1
     rescue ProtocolError | IO::Error
       1
     end

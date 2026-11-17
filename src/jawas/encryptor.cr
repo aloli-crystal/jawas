@@ -58,8 +58,8 @@ module Jawas
     @binary : String?
 
     def filter : Filter
-      unless (file = @recipients_file).nil? || File::Info.readable?(file)
-        raise DumpError.new("[encryption] : recipients_file illisible : #{file}")
+      if (file = @recipients_file) && (problem = Access.unreadable(file))
+        raise DumpError.new("[encryption] : recipients_file illisible : #{problem}")
       end
       Filter.new(File.basename(@binary_name), binary, args)
     end
@@ -72,7 +72,7 @@ module Jawas
         output: Process::Redirect::Close, error: err)
       status.success? ? nil : "#{@binary_name} a refusé les destinataires : #{err.to_s.strip}"
     rescue ex : DumpError | File::Error | IO::Error
-      ex.message
+      Access.message(ex)
     end
 
     private def resolve_binary : String

@@ -153,21 +153,37 @@ module Jawas::CLI
     private def self.check_source(source_config : Config::SourceConfig, work_dir : String) : Int32
       puts "Source #{source_config.name} (#{source_config.engine})"
       failures = 0
-      if (file = source_config.password_file) && File.exists?(file) && File.info(file).permissions.value & 0o077 != 0
-        puts "  ! #{file} est lisible par le groupe ou les autres (chmod 600 conseillé)"
+      if file = source_config.password_file
+        failures += check_password_file(file)
       end
       source = Source.for(source_config, work_dir)
       begin
         source.binaries.each { |b| puts "  ✓ #{b}" }
         dbs = source.databases
         puts "  ✓ #{dbs.size} base(s) : #{dbs.join(", ")}"
-      rescue ex : DumpError | ConfigError
-        puts "  ✗ #{ex.message}"
+      rescue ex : DumpError | ConfigError | File::Error
+        puts "  ✗ #{Access.message(ex)}"
         failures += 1
       ensure
         source.close
       end
       failures
+    end
+
+    # Illisible : échec (le dump échouerait). Lisible par d'autres :
+    # simple avertissement.
+    private def self.check_password_file(file : String) : Int32
+      if problem = Access.unreadable(file)
+        puts "  ✗ password_file : #{problem}"
+        return 1
+      end
+      if File.info(file).permissions.value & 0o077 != 0
+        puts "  ! #{file} est lisible par le groupe ou les autres (chmod 600 conseillé)"
+      end
+      0
+    rescue ex : File::Error
+      puts "  ✗ password_file : #{Access.describe(ex)}"
+      1
     end
 
     # ssh : ouvre réellement une session (clé, commande forcée, mode
@@ -209,13 +225,29 @@ module Jawas::CLI
       end
     end
 
+    # Un parent non traversable (ex. `/var/backups` en `root:wheel 0750`
+    # pour l'utilisateur `postgres`) est un échec signalé, pas un plantage.
     private def self.check_storage(dir : String) : Int32
+      label = "stockage #{dir}"
+      if Access.blocker(dir)
+        puts "✗ #{label} — #{Access.denied(dir)}"
+        return 1
+      end
       probe = dir
       until Dir.exists?(probe) || probe == "/"
         probe = File.dirname(probe)
       end
-      writable = File::Info.writable?(probe)
-      report_line(writable ? probe : nil, "stockage #{dir}#{Dir.exists?(dir) ? "" : " (sera créé)"}")
+      if File::Info.writable?(probe) && File::Info.executable?(probe)
+        puts "✓ #{label}#{probe == dir ? "" : " (sera créé)"}"
+        0
+      else
+        puts "✗ #{label} — #{probe} n'est pas accessible en écriture pour l'utilisateur #{Access.user}" \
+             "#{Access.ownership(probe).try { |rights| " (#{rights})" }}"
+        1
+      end
+    rescue ex : File::Error
+      puts "✗ #{label} — #{Access.describe(ex)}"
+      1
     end
 
     private def self.report_line(ok : String?, label : String) : Int32

@@ -32,7 +32,7 @@ module Jawas
           digest, (Time.instant - started).total_seconds)
       rescue ex : DumpError | File::Error | IO::Error
         DumpResult.new(source.name, db, periods.map(&.dirname),
-          seconds: (Time.instant - started).total_seconds, error: ex.message)
+          seconds: (Time.instant - started).total_seconds, error: Access.message(ex))
       end
     end
 
@@ -77,7 +77,7 @@ module Jawas
         raise failure
       end
     rescue ex : File::Error
-      raise DumpError.new(ex.message)
+      raise DumpError.new(Access.describe(ex))
     end
 
     # Attend tous les filtres. Quand l'un meurt, ceux d'avant échouent à

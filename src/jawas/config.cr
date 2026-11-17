@@ -69,8 +69,8 @@ module Jawas
         elsif file = @password_file
           begin
             File.read(file).chomp
-          rescue ex : IO::Error | File::Error
-            raise ConfigError.new("source #{@name} : password_file illisible (#{ex.message})")
+          rescue ex : IO::Error
+            raise ConfigError.new("source #{@name} : password_file illisible (#{Access.message(ex)})")
           end
         end
       end
@@ -131,15 +131,22 @@ module Jawas
       validate!
     end
 
+    # Un emplacement implicite dont un parent n'est pas traversable est
+    # passé (ex. `sudo -u postgres` qui garde le HOME de l'appelant) ;
+    # un `--config` inaccessible est une erreur.
     def self.locate(explicit : String?, no_user_config : Bool = false) : String
       if explicit
-        return explicit if File.file?(explicit)
+        begin
+          return explicit if File.file?(explicit)
+        rescue ex : File::Error
+          raise ConfigError.new("fichier de configuration #{explicit} : #{Access.describe(ex)}")
+        end
         raise ConfigError.new("fichier de configuration introuvable : #{explicit}")
       end
       candidates = [] of String
       candidates << File.join(xdg_config_home, "jawas", "config.toml") unless no_user_config
       candidates.concat(SYSTEM_PATHS)
-      candidates.find { |candidate| File.file?(candidate) } ||
+      candidates.find { |candidate| File.file?(candidate) rescue false } ||
         raise ConfigError.new("aucune configuration trouvée (essayé : #{candidates.join(", ")}) ; " \
                               "`jawas sample` affiche un modèle")
     end
@@ -151,7 +158,7 @@ module Jawas
     def self.load(path : String) : Config
       parse(File.read(path), path)
     rescue ex : File::Error
-      raise ConfigError.new("lecture de #{path} impossible : #{ex.message}")
+      raise ConfigError.new("lecture de #{path} impossible : #{Access.describe(ex)}")
     end
 
     def self.parse(source : String, path : String? = nil) : Config

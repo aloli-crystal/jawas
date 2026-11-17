@@ -8,6 +8,24 @@ https://keepachangelog.com/1.1.0/[Keep a Changelog] and
 versioning follows https://semver.org/[SemVer]
 (3-digit for creations, 4-digit for ports of Ruby gems).
 
+== v0.4.1 — 2026-11-17
+
+=== Fixed
+
+* A storage directory whose parent is not traversable (e.g.
+  `/var/backups`, `root:wheel 0750` on FreeBSD, for `sudo -u postgres`)
+  no longer crashes jawas with an unhandled `File::AccessDeniedError`.
+  `jawas check` lists it as a failed check; `backup`, `prune`, `list`,
+  `verify` and `upload` stop with exit code 1 and a clear message: the
+  path, the user running jawas and the offending parent directory with
+  its owner and mode. `receive` sends that reason back to the sender.
+* Same diagnostic for `--config`, `password_file` and `recipients_file`:
+  `check` reports an unreadable `password_file` as a failure. An
+  implicit configuration location that cannot be reached (user
+  `~/.config` kept by `sudo`) is skipped.
+* Safety net: no file or I/O error ends as an unhandled exception any
+  more (exit code 1).
+
 == v0.4.0 — 2026-11-16
 
 === Added
