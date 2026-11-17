@@ -76,17 +76,58 @@ module Jawas
       end
     end
 
+    # Destination d'envoi distant (`[[remote]]`) :
+    #
+    # * `ssh` : récepteur `jawas receive` sur l'hôte distant, joint par
+    #   ssh (en principe par une clé à commande forcée) ; ajout seul ;
+    # * `rclone` : `rclone copy --immutable` vers n'importe quel
+    #   stockage rclone (S3…) ; rien n'est jamais supprimé à distance.
+    class RemoteConfig
+      COMMON = %w[name type binary periods]
+      KEYS   = {
+        "ssh"    => COMMON + %w[host user port identity ssh_options command],
+        "rclone" => COMMON + %w[target config extra_args],
+      }
+
+      getter name : String
+      getter type : String
+      getter host : String?
+      getter user : String?
+      getter port : Int32?
+      getter identity : String?
+      getter ssh_options : Array(String)
+      getter command : String
+      getter target : String?
+      getter rclone_config : String?
+      getter extra_args : Array(String)
+      getter binary : String
+      getter periods : Array(String)
+
+      def initialize(@name, @type, *, @host = nil, @user = nil, @port = nil, @identity = nil,
+                     @ssh_options = [] of String, @command = "jawas receive --apply", @target = nil,
+                     @rclone_config = nil, @extra_args = [] of String, @binary = type,
+                     @periods = Period.values.map(&.dirname))
+      end
+
+      # Destination lisible : `user@hôte` ou cible rclone.
+      def destination : String
+        @type == "ssh" ? [@user, @host].compact.join('@') : @target.to_s
+      end
+    end
+
     getter path : String?
-    getter storage : Storage
     getter schedule : Schedule
     getter retention : Retention
     getter compressor : Compressor
     getter encryptor : Encryptor?
     getter hooks : Hooks
     getter sources : Array(SourceConfig)
+    getter remotes : Array(RemoteConfig)
+    # Modifiable : `--storage` remplace le répertoire du fichier.
+    property storage : Storage
 
     def initialize(@storage, @schedule, @retention, @compressor, @hooks, @sources, @path = nil,
-                   @encryptor = nil)
+                   @encryptor = nil, @remotes = [] of RemoteConfig)
       validate!
     end
 
@@ -120,11 +161,19 @@ module Jawas
       raise ConfigError.new("TOML invalide#{path ? " (#{path})" : ""} : #{ex.message}")
     end
 
+    # Configuration minimale d'un hôte qui ne fait que recevoir, purger
+    # et vérifier (`--storage` sans fichier de configuration).
+    def self.minimal(dir : String) : Config
+      parse("[storage]\ndir = #{dir.to_json}\n")
+    end
+
+    # Sans `[[source]]`, la configuration ne sert qu'à recevoir, purger,
+    # lister ou vérifier : `backup` le refuse (cf. `Runner#backup`).
     private def validate!
-      raise ConfigError.new("aucune source déclarée ([[source]])") if @sources.empty?
-      names = @sources.map(&.name)
-      if dup = names.find { |other| names.count(other) > 1 }
-        raise ConfigError.new("nom de source en double : #{dup}")
+      {"source" => @sources.map(&.name), "remote" => @remotes.map(&.name)}.each do |kind, names|
+        if dup = names.find { |other| names.count(other) > 1 }
+          raise ConfigError.new("nom de #{kind} en double : #{dup}")
+        end
       end
       unless (0..7).includes?(@schedule.weekly_day)
         raise ConfigError.new("schedule.weekly_day doit valoir 0 (désactivé) ou 1 (lundi) … 7 (dimanche)")
@@ -233,8 +282,36 @@ module Jawas
       end
 
       def build : Config
-        check_keys(@root, %w[storage schedule retention compression encryption hooks source])
-        Config.new(storage, schedule, retention, compressor, hooks, sources, @path, encryptor)
+        check_keys(@root, %w[storage schedule retention compression encryption hooks source remote])
+        Config.new(storage, schedule, retention, compressor, hooks, sources, @path, encryptor, remotes)
+      end
+
+      private def remotes : Array(RemoteConfig)
+        @root.tables("remote").map { |table| remote(table) }
+      end
+
+      private def remote(t : Table) : RemoteConfig
+        type = t.string!("type")
+        keys = RemoteConfig::KEYS[type]? ||
+               raise ConfigError.new("#{t.key_name("type")} : « #{type} » inconnu (#{RemoteConfig::KEYS.keys.join(", ")})")
+        check_keys(t, keys)
+        name = safe_name(t)
+        periods = t.strings("periods", Period.values.map(&.dirname))
+        if bad = periods.find { |period| Period.parse?(period).nil? }
+          raise ConfigError.new("#{t.key_name("periods")} : période « #{bad} » inconnue (daily, weekly, monthly)")
+        end
+        RemoteConfig.new(name, type,
+          host: (t.string!("host") if type == "ssh"), user: t.string?("user"), port: t.int?("port"),
+          identity: t.string?("identity"), ssh_options: t.strings("ssh_options"),
+          command: t.string("command", "jawas receive --apply"),
+          target: (t.string!("target") if type == "rclone"), rclone_config: t.string?("config"),
+          extra_args: t.strings("extra_args"), binary: t.string("binary", type), periods: periods)
+      end
+
+      private def safe_name(t : Table) : String
+        name = t.string!("name")
+        return name if name.matches?(/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/)
+        raise ConfigError.new("#{t.key_name("name")} : « #{name} » doit se limiter à [A-Za-z0-9._-]")
       end
 
       private def storage : Storage
@@ -287,10 +364,7 @@ module Jawas
         unless ENGINES.includes?(engine)
           raise ConfigError.new("#{t.key_name("engine")} : moteur « #{engine} » inconnu (#{ENGINES.join(", ")})")
         end
-        name = t.string!("name")
-        unless name.matches?(/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/)
-          raise ConfigError.new("#{t.key_name("name")} : « #{name} » doit se limiter à [A-Za-z0-9._-]")
-        end
+        name = safe_name(t)
         if t.string?("password_env") && t.string?("password_file")
           raise ConfigError.new("source #{name} : password_env et password_file sont exclusifs")
         end

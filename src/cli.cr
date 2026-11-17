@@ -4,11 +4,11 @@
 #
 # * `jawas help [<sous-commande>]`, `-h`, `--help` ;
 # * chaque sous-commande et chaque flag long a un raccourci ;
-# * les commandes qui modifient (`backup`, `prune`) sont en dry-run par
-#   défaut et n'agissent qu'avec `--apply`.
+# * les commandes qui modifient (`backup`, `prune`, `upload`, `restore`,
+#   `receive`) sont en dry-run par défaut et n'agissent qu'avec `--apply`.
 #
 # Codes de sortie : 0 succès, 1 erreur d'usage ou de configuration,
-# 2 sauvegarde partielle (au moins une base en échec), 3 verrou tenu.
+# 2 échec partiel (au moins une base ou un envoi en échec), 3 verrou tenu.
 
 require "option_parser"
 require "./jawas"
@@ -20,6 +20,8 @@ module Jawas::CLI
     "list"    => "l",
     "verify"  => "v",
     "restore" => "r",
+    "upload"  => "u",
+    "receive" => "rx",
     "check"   => "c",
     "sample"  => "s",
     "help"    => "h",
@@ -40,6 +42,9 @@ module Jawas::CLI
     property file : String? = nil
     property into : String? = nil
     property? replace = false
+    property? upload = true
+    property storage : String? = nil
+    property remotes = [] of String
   end
 
   def self.parser(options : Options) : OptionParser
@@ -53,6 +58,8 @@ module Jawas::CLI
           list    (l)  Liste les sauvegardes présentes dans le stockage
           verify  (v)  Contrôle empreinte, archive et contenu des sauvegardes
           restore (r)  Restaure une sauvegarde (base jetable par défaut ; dry-run sans --apply)
+          upload  (u)  Envoie les sauvegardes vers les [[remote]] (dry-run sans --apply)
+          receive (rx) Récepteur d'envoi ssh, en ajout seul (commande forcée côté distant)
           check  (c)   Vérifie la configuration, les outils et les connexions
           sample (s)   Affiche un modèle de configuration TOML
           help   (h)   Affiche l'aide (globale ou d'une sous-commande)
@@ -62,6 +69,7 @@ module Jawas::CLI
 
       op.on("-c CHEMIN", "--config=CHEMIN", "Fichier de configuration TOML") { |v| options.config = v }
       op.on("-U", "--no-user-config", "Ignore ${XDG_CONFIG_HOME}/jawas/config.toml") { options.no_user_config = true }
+      op.on("-S DOSSIER", "--storage=DOSSIER", "Répertoire de stockage (remplace [storage] dir)") { |v| options.storage = v }
       op.on("-a", "--apply", "Exécute réellement (sinon : dry-run)") { options.apply = true }
       op.on("-s NOM", "--source=NOM", "Limite à une source (répétable, ou liste a,b)") do |v|
         options.sources.concat(v.split(',').map(&.strip).reject(&.empty?))
@@ -83,6 +91,10 @@ module Jawas::CLI
       op.on("-t CIBLE", "--into=CIBLE", "restore : base (ou fichier SQLite) cible") { |v| options.into = v }
       op.on("-R", "--replace", "restore : écrase la cible si elle existe") { options.replace = true }
       op.on("-P", "--no-prune", "backup : ne pas appliquer la rotation") { options.prune = false }
+      op.on("-N", "--no-upload", "backup : ne pas envoyer vers les [[remote]]") { options.upload = false }
+      op.on("-r NOM", "--remote=NOM", "Limite à une destination [[remote]] (répétable, ou liste a,b)") do |v|
+        options.remotes.concat(v.split(',').map(&.strip).reject(&.empty?))
+      end
       op.on("-j", "--json", "Sortie JSON") { options.json = true }
       op.on("-q", "--quiet", "N'affiche que les erreurs") { options.quiet = true }
       op.on("-v", "--version", "Affiche la version") do
@@ -124,8 +136,9 @@ module Jawas::CLI
     end
 
     case sub = resolve(positional.first)
-    when "help"   then help(parser, positional[1]?)
-    when "sample" then (puts SAMPLE_CONFIG; 0)
+    when "help"    then help(parser, positional[1]?)
+    when "sample"  then (puts SAMPLE_CONFIG; 0)
+    when "receive" then Commands.receive(options)
     when nil
       STDERR.puts "Erreur : sous-commande inconnue « #{positional.first} »"
       STDERR.puts parser
@@ -145,17 +158,32 @@ module Jawas::CLI
   end
 
   def self.dispatch(sub : String, options : Options) : Int32
-    config = Config.load(Config.locate(options.config, options.no_user_config?))
+    config = load_config(options)
     log = options.quiet? ? IO::Memory.new : STDERR
-    runner = Runner.new(config, options.sources, options.databases, log)
+    runner = Runner.new(config, options.sources, options.databases, log, options.remotes)
     case sub
     when "backup"  then Commands.backup(runner, options)
     when "prune"   then Commands.prune(runner, options)
     when "list"    then Commands.list(runner, options)
     when "verify"  then Commands.verify(runner, options)
     when "restore" then Commands.restore(runner, options)
+    when "upload"  then Commands.upload(runner, options)
     else                Commands.check(runner, options)
     end
+  end
+
+  # `--storage` remplace le répertoire du fichier ; sans fichier de
+  # configuration, il suffit à recevoir, purger, lister et vérifier.
+  def self.load_config(options : Options) : Config
+    path = begin
+      Config.locate(options.config, options.no_user_config?)
+    rescue ex : ConfigError
+      raise ex unless (dir = options.storage) && options.config.nil?
+      return Config.minimal(dir)
+    end
+    config = Config.load(path)
+    options.storage.try { |dir| config.storage = Config::Storage.new(dir, config.storage.latest) }
+    config
   end
 
   def self.help(parser : OptionParser, sub : String?) : Int32
@@ -177,10 +205,11 @@ module Jawas::CLI
 
   HELP_DETAILS = {
     "backup" => <<-TXT,
-      jawas backup [-a] [-s SOURCE] [-d BASE] [-P] [-j]
+      jawas backup [-a] [-s SOURCE] [-d BASE] [-P] [-N] [-r DEST] [-j]
         Sans --apply : liste les bases et les fichiers qui seraient écrits ou purgés.
         Avec --apply : dump → compression → fichier 0600 + .sha256, liens weekly/monthly
-        et latest, rotation (sauf -P), rapport last-run.json. Exemple cron :
+        et latest, rotation (sauf -P), envoi vers les [[remote]] (sauf -N), rapport
+        last-run.json. Exemple cron :
           15 3 * * *  jawas backup --apply --quiet
       TXT
     "prune" => <<-TXT,
@@ -206,9 +235,25 @@ module Jawas::CLI
         voisin). Écraser une base existante, l'originale comprise, exige -t NOM et -R.
         _globals (rôles PostgreSQL) se rejoue à la main.
       TXT
+    "upload" => <<-TXT,
+      jawas upload [-a] [-r DEST] [-s SOURCE] [-j]
+        Envoie les sauvegardes du stockage vers les [[remote]], en ajout seul : jamais de
+        suppression ni de remplacement à distance. ssh : récepteur `jawas receive` (seuls les
+        fichiers absents sont transmis, les liens weekly/monthly recréés sans transfert) ;
+        rclone : `rclone copy --immutable`. `backup --apply` l'enchaîne de lui-même (sauf -N).
+      TXT
+    "receive" => <<-TXT,
+      jawas receive -S DOSSIER --apply
+        Côté distant d'un [[remote]] ssh, en commande forcée de la clé de l'émetteur :
+          command="jawas receive -S /srv/jawas/web1 --apply",restrict ssh-ed25519 AAAA…
+        Accepte les sauvegardes nouvelles, contrôle leur SHA-256, refuse tout remplacement.
+        La rotation distante se fait sur place : jawas prune -S /srv/jawas/web1 --apply.
+        Sans --apply : contrôle les données reçues sans rien écrire.
+      TXT
     "check" => <<-TXT,
-      jawas check [-s SOURCE]
-        Vérifie la configuration, les exécutables, le stockage et la connexion à chaque source.
+      jawas check [-s SOURCE] [-r DEST]
+        Vérifie la configuration, les exécutables, le stockage, la connexion à chaque source
+        et aux récepteurs ssh des [[remote]].
       TXT
     "sample" => "jawas sample > ~/.config/jawas/config.toml\n  Modèle de configuration commenté.",
     "help"   => "jawas help [SOUS-COMMANDE]",

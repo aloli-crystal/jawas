@@ -8,6 +8,33 @@ https://keepachangelog.com/1.1.0/[Keep a Changelog] et le
 versioning suit https://semver.org/[SemVer]
 (3 chiffres pour création, 4 pour portage de gem Ruby).
 
+== v0.4.0 — 2026-11-16
+
+=== Ajouté
+
+* Envoi distant `[[remote]]`, enchaîné par `backup --apply` (sauf
+  `-N/--no-upload`) ou lancé seul par `jawas upload` (`u`, dry-run sans
+  `--apply`, `-r/--remote` pour choisir la destination). Toujours en
+  ajout seul : rien n'est jamais supprimé ni remplacé à distance.
+* Type `ssh` : récepteur `jawas receive` (`rx`) sur l'hôte distant, en
+  commande forcée de la clé de l'émetteur. Seuls les fichiers absents
+  sont transmis, l'empreinte SHA-256 est contrôlée à l'arrivée, les
+  copies weekly/monthly sont recréées en liens physiques sans
+  transfert ; un fichier distant différent est refusé, jamais remplacé.
+* Type `rclone` : `rclone copy --immutable` vers tout stockage rclone
+  (S3 OVH, Scaleway…), avec `periods` pour n'envoyer que `daily`.
+* `-S/--storage` : remplace le répertoire de stockage ; sans fichier
+  de configuration, suffit à `receive`, `prune`, `list` et `verify`
+  sur l'hôte distant.
+* `jawas check` ouvre une session avec chaque récepteur ssh.
+
+=== Modifié
+
+* Une configuration sans `[[source]]` est acceptée (hôte récepteur) ;
+  `backup` la refuse.
+* Code de sortie 2 aussi en cas d'envoi en échec ; le rapport
+  `last-run.json` gagne `uploads`.
+
 == v0.3.0 — 2026-11-16
 
 === Ajouté

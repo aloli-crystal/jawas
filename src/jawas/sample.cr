@@ -34,6 +34,26 @@ module Jawas
     pre = []                     # ex. ["systemctl stop app-worker"]
     post = []                    # reçoivent JAWAS_STATUS (ok/failed) et JAWAS_REPORT
 
+    # Envoi distant (facultatif), après chaque `backup --apply`, en ajout
+    # seul : rien n'est jamais supprimé ni remplacé à distance.
+    # [[remote]]
+    # name = "coffre"
+    # type = "ssh"                 # récepteur `jawas receive` sur l'hôte distant
+    # host = "backup.example.net"
+    # user = "jawas"
+    # identity = "/usr/local/etc/jawas/id_ed25519"
+    # # port = 22 ; ssh_options = ["StrictHostKeyChecking=yes"]
+    # # côté distant, ~jawas/.ssh/authorized_keys :
+    # # command="jawas receive -S /srv/jawas/web1 --apply",restrict ssh-ed25519 AAAA…
+    #
+    # [[remote]]
+    # name = "s3"
+    # type = "rclone"              # rclone copy --immutable
+    # target = "ovh:sauvegardes/web1"
+    # config = "/usr/local/etc/jawas/rclone.conf"
+    # periods = ["daily"]          # rclone ne garde pas les liens : weekly/monthly
+    #                              # seraient des copies complètes
+
     [[source]]
     name = "mysql-local"
     engine = "mariadb"           # mysql, mariadb, postgresql, sqlite

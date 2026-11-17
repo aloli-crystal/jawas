@@ -1,8 +1,27 @@
 module Jawas::CLI
   # Implémentation des sous-commandes (sorties texte ou JSON).
   module Commands
+    def self.upload(runner : Runner, options : Options) : Int32
+      raise UsageError.new("aucune destination déclarée ([[remote]])") if runner.config.remotes.empty?
+      results = runner.upload(apply: options.apply?)
+      if options.json?
+        puts results.to_pretty_json
+      elsif !options.quiet? || !results.all?(&.ok?)
+        print_uploads(results)
+        puts dry_run_hint unless options.apply?
+      end
+      results.all?(&.ok?) ? 0 : 2
+    end
+
+    # Récepteur : la racine vient de `--storage` ou de la configuration
+    # locale, jamais de l'émetteur.
+    def self.receive(options : Options) : Int32
+      root = options.storage || Config.load(Config.locate(options.config, options.no_user_config?)).storage.dir
+      Receiver.new(root, STDIN, STDOUT, options.apply?).run
+    end
+
     def self.backup(runner : Runner, options : Options) : Int32
-      report = runner.backup(apply: options.apply?, prune: options.prune?)
+      report = runner.backup(apply: options.apply?, prune: options.prune?, upload: options.upload?)
       if options.json?
         puts report.to_pretty_json
       elsif !options.quiet? || !report.ok?
@@ -23,7 +42,7 @@ module Jawas::CLI
     end
 
     def self.list(runner : Runner, options : Options) : Int32
-      entries = Inventory.scan(runner.layout, runner.selected_sources.map(&.name))
+      entries = Inventory.scan(runner.layout, runner.source_names)
       entries.select! { |e| options.databases.includes?(e.database) } unless options.databases.empty?
       if options.json?
         puts entries.to_pretty_json
@@ -43,7 +62,7 @@ module Jawas::CLI
     end
 
     def self.verify(runner : Runner, options : Options) : Int32
-      entries = Inventory.scan(runner.layout, runner.selected_sources.map(&.name))
+      entries = Inventory.scan(runner.layout, runner.source_names)
       unless options.databases.empty?
         wanted = options.databases.map { |db| Layout.safe(db) }
         entries.select! { |e| wanted.includes?(e.database) }
@@ -123,6 +142,10 @@ module Jawas::CLI
       runner.selected_sources.each do |source_config|
         failures += check_source(source_config, runner.layout.work_dir)
       end
+      puts "Aucune [[source]] : configuration de réception, rotation et vérification seules" if config.sources.empty?
+      runner.selected_remotes.each do |remote|
+        failures += check_remote(runner.layout, remote)
+      end
       puts failures.zero? ? "✓ tout est prêt" : "✗ #{failures} problème(s)"
       failures.zero? ? 0 : 1
     end
@@ -145,6 +168,32 @@ module Jawas::CLI
         source.close
       end
       failures
+    end
+
+    # ssh : ouvre réellement une session (clé, commande forcée, mode
+    # apply). rclone : exécutable et fichier de configuration seulement.
+    private def self.check_remote(layout : Layout, remote : Config::RemoteConfig) : Int32
+      label = "destination #{remote.name} (#{remote.type} #{remote.destination})"
+      unless Process.find_executable(remote.binary)
+        puts "✗ #{label} — #{remote.binary} introuvable"
+        return 1
+      end
+      if remote.type == "rclone"
+        config = remote.rclone_config
+        return report_line(config.nil? || File.file?(config) ? remote.binary : nil,
+          "#{label}#{config ? ", configuration #{config}" : ""}")
+      end
+      mode = Uploader.new(layout, remote, IO::Memory.new).ping
+      if mode == "apply"
+        puts "✓ #{label} : récepteur joint"
+        0
+      else
+        puts "✗ #{label} : récepteur en #{mode} (ajoutez --apply à sa commande)"
+        1
+      end
+    rescue ex : UploadError
+      puts "✗ #{label} — #{ex.message}"
+      1
     end
 
     private def self.check_encryption(encryptor : Encryptor) : Int32
@@ -188,10 +237,28 @@ module Jawas::CLI
       end
       report.errors.each { |e| puts "✗ #{e}" }
       print_pruned(report.pruned, applied)
+      print_uploads(report.uploads)
       if applied
         puts "#{report.dumps.count(&.ok?)}/#{report.dumps.size} base(s), #{Jawas.human_size(report.total_size)}"
       else
         puts dry_run_hint
+      end
+    end
+
+    private def self.print_uploads(results : Array(UploadResult)) : Nil
+      results.each do |upload|
+        label = "#{upload.remote} (#{upload.type} #{upload.destination})"
+        if !upload.applied?
+          puts "· envoi #{label} : #{upload.offered} sauvegarde(s) proposée(s), #{Jawas.human_size(upload.offered_bytes)} au plus"
+        elsif error = upload.error
+          puts "✗ envoi #{label} : #{error}"
+        else
+          linked = upload.linked > 0 ? ", #{upload.linked} lien(s)" : ""
+          size = upload.type == "ssh" ? " (#{Jawas.human_size(upload.bytes)})" : ""
+          puts "#{upload.ok? ? "✓" : "✗"} envoi #{label} : #{upload.sent} envoyée(s)#{size}" \
+               "#{linked}, #{upload.present} déjà présente(s) en #{upload.seconds.round(1)} s"
+        end
+        upload.failures.each { |failure| puts "    ✗ #{failure}" }
       end
     end
 

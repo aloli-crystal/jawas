@@ -58,6 +58,36 @@ module Jawas
       File.join(db_dir(source, period, db), file_name(db, time, period, extension))
     end
 
+    # Sources présentes dans le stockage (sous-répertoires contenant au
+    # moins un dossier de période) : un hôte qui reçoit des sauvegardes
+    # n'a pas de `[[source]]` dans sa configuration.
+    def stored_sources : Array(String)
+      return [] of String unless Dir.exists?(@root)
+      Dir.children(@root).sort.select do |name|
+        dir = File.join(@root, name)
+        !name.starts_with?('.') && Dir.exists?(dir) && !File.symlink?(dir) &&
+          Period.values.any? { |period| Dir.exists?(File.join(dir, period.dirname)) }
+      end
+    end
+
+    # Chemin relatif à la racine du stockage.
+    def relative(path : String) : String
+      Path[path].relative_to(@root).to_s
+    end
+
+    COMPONENT = /\A[A-Za-z0-9_][A-Za-z0-9._-]*\z/
+
+    # Vrai pour un chemin relatif de sauvegarde bien formé :
+    # `<source>/<période>/<base>/<base>_<horodatage>.<période><ext>`,
+    # sans `..`, sans composant caché, sans chemin absolu.
+    def self.valid_relative?(relative : String) : Bool
+      parts = relative.split('/')
+      return false unless parts.size == 4 && parts.all?(&.matches?(COMPONENT))
+      source, period, db, name = parts
+      return false unless Period.values.any? { |known| known.dirname == period }
+      backup_file?(name) && name.starts_with?("#{db}_") && name.includes?(".#{period}.") && !source.empty?
+    end
+
     # Nom de fichier sûr : tout ce qui n'est pas [A-Za-z0-9._-] devient `_`.
     def self.safe(name : String) : String
       cleaned = name.gsub(/[^A-Za-z0-9._-]/, "_")

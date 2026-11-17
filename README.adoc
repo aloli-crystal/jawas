@@ -10,11 +10,11 @@ https://sourceforge.net/projects/automysqlbackup/[automysqlbackup]
 (daily/weekly/monthly rotation, one archive per database, pre/post
 hooks) and widens them: several engines, several servers in one
 configuration, public-key `age` encryption, backup verification and
-restore, and a roadmap towards remote upload.
+restore, and append-only remote upload.
 
 Version française : link:README.fr.adoc[README.fr.adoc].
 
-== Features (0.3.0)
+== Features (0.4.0)
 
 * *Engines*: MySQL and MariaDB (`mysqldump` / `mariadb-dump`),
   PostgreSQL (`pg_dump`, plain SQL or `custom` format, plus roles via
@@ -35,6 +35,9 @@ Version française : link:README.fr.adoc[README.fr.adoc].
 * *Verification and restore* (0.3): `verify` checks checksum, archive
   and content; `restore` loads a backup back, into a throw-away
   database by default.
+* *Remote upload* (0.4): to a `jawas receive` receiver over ssh or to
+  any `rclone` storage (S3…), append-only: nothing is ever deleted or
+  replaced remotely.
 * *Integrity*: write to `.part` then atomic rename, `.sha256` sidecar
   (`sha256sum -c` format), 0600 files and 0700 directories, `latest/`
   link to the newest dump.
@@ -55,7 +58,8 @@ ln -s "$PWD/bin/jawas" ~/bin/jawas
 
 External tools, depending on the engines and compressor in use:
 `mysqldump`/`mariadb-dump`, `pg_dump`/`pg_dumpall`/`psql`, `sqlite3`,
-`gzip`/`pigz`/`bzip2`/`xz`/`zstd`, and `age` (or `rage`) for encryption.
+`gzip`/`pigz`/`bzip2`/`xz`/`zstd`, and `age` (or `rage`) for encryption,
+`ssh` or `rclone` for remote upload.
 
 == Quick start
 
@@ -201,6 +205,60 @@ Loading goes through `mysql`/`mariadb` (`CREATE DATABASE` and `USE`
 header removed to aim at the target), `psql -v ON_ERROR_STOP=1` or
 `pg_restore --exit-on-error`, and `sqlite3`.
 
+== Remote upload
+
+Every `backup --apply` then sends the backups to the `[[remote]]`
+destinations (`-N`: no upload). `jawas upload` uploads alone (dry-run
+without `--apply`, `-r NAME` for one destination). In every case the
+upload is *append-only*: nothing is ever deleted or replaced remotely.
+
+[source,toml]
+----
+[[remote]]
+name = "vault"
+type = "ssh"                  # jawas receive receiver
+host = "backup.example.net"
+user = "jawas"
+identity = "/usr/local/etc/jawas/id_ed25519"
+
+[[remote]]
+name = "s3"
+type = "rclone"               # rclone copy --immutable
+target = "ovh:backups/web1"
+config = "/usr/local/etc/jawas/rclone.conf"
+periods = ["daily"]
+----
+
+*ssh.* On the remote host, jawas is installed and a dedicated account
+receives the backups through a forced-command key. The root is set on
+that side, never by the sender:
+
+[source]
+----
+command="jawas receive -S /srv/jawas/web1 --apply",restrict ssh-ed25519 AAAA… jawas
+----
+
+The receiver only accepts missing files, checks their SHA-256 on
+arrival and recreates weekly/monthly copies as hard links without
+sending them again. It refuses to replace an existing file: a
+compromised server therefore cannot erase the remote history.
+`jawas check` opens a session to check key, command and mode.
+
+Remote rotation runs on the spot, for instance from cron:
+`jawas prune -S /srv/jawas/web1 --apply`. `list` and `verify` work
+there too, with no configuration nor database access. Keep a remote
+retention at least as long as the sender's, otherwise backups pruned
+remotely would be sent again.
+
+*rclone.* `rclone copy --immutable` neither deletes nor replaces
+anything. Hard links are not kept: `periods = ["daily"]` avoids
+sending the same file three times. The S3 storage's object lock
+completes the append-only guarantee.
+
+*Notification.* No dedicated module: cron mails the output of
+`--quiet` on error, and `post` hooks receive `JAWAS_STATUS` and
+`JAWAS_REPORT` (a webhook is a one-line `curl`).
+
 == Storage layout
 
 [source]
@@ -230,20 +288,22 @@ With `[encryption]`, names end in `.age`
 | `list`    | `l` | Inventory of the stored backups
 | `verify`  | `v` | Checksum, archive and content checks
 | `restore` | `r` | Restore, throw-away database by default (dry-run without `--apply`)
+| `upload`  | `u` | Upload to the `[[remote]]` destinations (dry-run without `--apply`)
+| `receive` | `rx` | Append-only ssh upload receiver (remote side)
 | `check`  | `c` | Configuration, executables, storage, connections
 | `sample` | `s` | Configuration template
 | `help`   | `h` | Global help or `help <command>`
 |===
 
-Options: `-c/--config`, `-U/--no-user-config`, `-a/--apply`,
-`-s/--source` and `-d/--database` (repeatable or `a,b`),
-`-P/--no-prune`, `-j/--json`, `-q/--quiet`, `-v/--version`,
+Options: `-c/--config`, `-U/--no-user-config`, `-S/--storage`,
+`-a/--apply`, `-s/--source` and `-d/--database` (repeatable or `a,b`),
+`-P/--no-prune`, `-N/--no-upload`, `-r/--remote`, `-j/--json`, `-q/--quiet`, `-v/--version`,
 `-h/--help`; for `verify` and `restore`: `-i/--identity` (age private
 key), `-A/--all`, `-D/--date`, `-f/--file`, `-t/--into`,
 `-R/--replace`.
 
 Exit codes: `0` success, `1` usage or configuration error, `2` at
-least one database failed, `3` lock held by another run.
+least one database or upload failed, `3` lock held by another run.
 
 == Differences from automysqlbackup
 
@@ -254,16 +314,19 @@ least one database failed, `3` lock held by another run.
 * No password in the configuration (temporary 0600 option file for
   MySQL, `PGPASSWORD` for PostgreSQL).
 * Public-key `age` encryption instead of shared-password `openssl`.
-* No mail report nor differential mode yet: see the roadmap.
+* Append-only remote upload (ssh receiver or rclone) instead of a plain
+  copy.
+* No built-in mail: cron and `post` hooks take care of it.
 
 == Roadmap
 
 0. *0.2* — `age` encryption (multiple recipients): shipped.
 0. *0.3* — `verify` and `restore`: shipped.
-0. *0.4* — remote upload (SFTP/rsync, S3 object storage: OVH,
-   Scaleway…), mail/webhook report notification.
+0. *0.4* — append-only remote upload (`jawas receive` receiver over
+   ssh, `rclone`): shipped.
 0. *0.5* — fine-grained GFS retention, monitoring metrics.
-0. Later — "file" sources (rsync, tar archives), beyond databases.
+0. Later — "file" sources (tar archives first), beyond databases;
+   documented "pull" mode (the remote host fetches the backups).
 
 == Development
 

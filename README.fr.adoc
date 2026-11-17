@@ -11,12 +11,11 @@ https://sourceforge.net/projects/automysqlbackup/[d'automysqlbackup]
 (rotation daily/weekly/monthly, une archive par base, hooks avant/après)
 et les élargit : plusieurs moteurs, plusieurs serveurs dans une même
 configuration, chiffrement `age` à clés publiques, vérification et
-restauration des sauvegardes, et une feuille de route vers l'envoi
-distant.
+restauration des sauvegardes, et envoi distant en ajout seul.
 
 English version: link:README.adoc[README.adoc].
 
-== Fonctionnalités (0.3.0)
+== Fonctionnalités (0.4.0)
 
 * *Moteurs* : MySQL et MariaDB (`mysqldump` / `mariadb-dump`),
   PostgreSQL (`pg_dump`, SQL ou format `custom`, plus les rôles via
@@ -37,6 +36,9 @@ English version: link:README.adoc[README.adoc].
 * *Vérification et restauration* (0.3) : `verify` contrôle empreinte,
   archive et contenu ; `restore` recharge une sauvegarde, par défaut
   dans une base jetable.
+* *Envoi distant* (0.4) : vers un récepteur `jawas receive` par ssh ou
+  vers tout stockage `rclone` (S3…), en ajout seul : rien n'est jamais
+  supprimé ni remplacé à distance.
 * *Intégrité* : écriture dans un `.part` puis renommage atomique,
   fichier `.sha256` (format `sha256sum -c`), fichiers en 0600 et
   répertoires en 0700, lien `latest/` vers le dernier dump.
@@ -58,7 +60,8 @@ ln -s "$PWD/bin/jawas" ~/bin/jawas
 
 Outils externes, selon les moteurs et le compresseur utilisés :
 `mysqldump`/`mariadb-dump`, `pg_dump`/`pg_dumpall`/`psql`, `sqlite3`,
-`gzip`/`pigz`/`bzip2`/`xz`/`zstd`, et `age` (ou `rage`) pour le chiffrement.
+`gzip`/`pigz`/`bzip2`/`xz`/`zstd`, et `age` (ou `rage`) pour le chiffrement,
+`ssh` ou `rclone` pour l'envoi distant.
 
 == Démarrage rapide
 
@@ -208,6 +211,62 @@ Le chargement passe par `mysql`/`mariadb` (en-tête `CREATE DATABASE`
 et `USE` retiré pour viser la cible), `psql -v ON_ERROR_STOP=1` ou
 `pg_restore --exit-on-error`, et `sqlite3`.
 
+== Envoi distant
+
+Chaque `backup --apply` envoie ensuite les sauvegardes vers les
+destinations `[[remote]]` (`-N` : pas d'envoi). `jawas upload` fait
+l'envoi seul (dry-run sans `--apply`, `-r NOM` pour une destination).
+Dans tous les cas, l'envoi est en *ajout seul* : rien n'est jamais
+supprimé ni remplacé à distance.
+
+[source,toml]
+----
+[[remote]]
+name = "coffre"
+type = "ssh"                  # récepteur jawas receive
+host = "backup.example.net"
+user = "jawas"
+identity = "/usr/local/etc/jawas/id_ed25519"
+
+[[remote]]
+name = "s3"
+type = "rclone"               # rclone copy --immutable
+target = "ovh:sauvegardes/web1"
+config = "/usr/local/etc/jawas/rclone.conf"
+periods = ["daily"]
+----
+
+*ssh.* Sur l'hôte distant, jawas est installé et un compte dédié reçoit
+les sauvegardes par une clé à commande forcée. La racine est fixée de
+ce côté, jamais par l'émetteur :
+
+[source]
+----
+command="jawas receive -S /srv/jawas/web1 --apply",restrict ssh-ed25519 AAAA… jawas
+----
+
+Le récepteur n'accepte que des fichiers absents, contrôle leur SHA-256
+à l'arrivée et recrée les copies weekly/monthly en liens physiques sans
+les retransmettre. Il refuse de remplacer un fichier existant : un
+serveur compromis ne peut donc pas effacer l'historique distant.
+`jawas check` ouvre une session pour vérifier clé, commande et mode.
+
+La rotation distante se fait sur place, par exemple en cron :
+`jawas prune -S /srv/jawas/web1 --apply`. `list` et `verify` y
+fonctionnent aussi, sans configuration ni accès aux bases. Gardez une
+rétention distante au moins égale à celle de l'émetteur, sinon les
+sauvegardes purgées à distance seraient renvoyées.
+
+*rclone.* `rclone copy --immutable` ne supprime ni ne remplace rien.
+Les liens physiques ne sont pas conservés : `periods = ["daily"]` évite
+d'envoyer trois fois le même fichier. Le verrouillage d'objets
+(« object lock ») du stockage S3 complète la garantie d'ajout seul.
+
+*Notification.* Pas de module dédié : cron envoie par mail la sortie
+de `--quiet` en cas d'erreur, et les hooks `post` reçoivent
+`JAWAS_STATUS` et `JAWAS_REPORT` (un webhook tient en une ligne de
+`curl`).
+
 == Arborescence produite
 
 [source]
@@ -237,20 +296,22 @@ Avec `[encryption]`, les noms se terminent par `.age`
 | `list`    | `l` | Inventaire des sauvegardes du stockage
 | `verify`  | `v` | Contrôle empreinte, archive et contenu
 | `restore` | `r` | Restauration, base jetable par défaut (dry-run sans `--apply`)
+| `upload`  | `u` | Envoi vers les `[[remote]]` (dry-run sans `--apply`)
+| `receive` | `rx` | Récepteur d'envoi ssh, en ajout seul (côté distant)
 | `check`  | `c` | Configuration, exécutables, stockage, connexions
 | `sample` | `s` | Modèle de configuration
 | `help`   | `h` | Aide globale ou `help <commande>`
 |===
 
-Options : `-c/--config`, `-U/--no-user-config`, `-a/--apply`,
-`-s/--source` et `-d/--database` (répétables ou `a,b`),
-`-P/--no-prune`, `-j/--json`, `-q/--quiet`, `-v/--version`,
+Options : `-c/--config`, `-U/--no-user-config`, `-S/--storage`,
+`-a/--apply`, `-s/--source` et `-d/--database` (répétables ou `a,b`),
+`-P/--no-prune`, `-N/--no-upload`, `-r/--remote`, `-j/--json`, `-q/--quiet`, `-v/--version`,
 `-h/--help` ; pour `verify` et `restore` : `-i/--identity` (clé privée
 age), `-A/--all`, `-D/--date`, `-f/--file`, `-t/--into`,
 `-R/--replace`.
 
 Codes de sortie : `0` succès, `1` usage ou configuration, `2` au moins
-une base en échec, `3` verrou tenu par une autre exécution.
+une base ou un envoi en échec, `3` verrou tenu par une autre exécution.
 
 == Différences avec automysqlbackup
 
@@ -262,19 +323,21 @@ une base en échec, `3` verrou tenu par une autre exécution.
   temporaire pour MySQL, `PGPASSWORD` pour PostgreSQL).
 * Chiffrement `age` à clés publiques au lieu d'`openssl` à mot de
   passe partagé.
-* Pas encore d'envoi de rapport par mail ni de mode différentiel :
-  voir la feuille de route.
+* Envoi distant en ajout seul (récepteur ssh ou rclone) au lieu d'une
+  simple copie.
+* Pas de mail intégré : cron et les hooks `post` s'en chargent.
 
 == Feuille de route
 
 0. *0.2* — chiffrement `age` (destinataires multiples) : livré.
 0. *0.3* — `verify` et `restore` : livrés.
-0. *0.4* — envoi distant (SFTP/rsync, stockage objet S3 : OVH,
-   Scaleway…), notification mail/webhook du rapport.
+0. *0.4* — envoi distant en ajout seul (récepteur `jawas receive` par
+   ssh, `rclone`) : livré.
 0. *0.5* — politique de rétention GFS fine, métriques pour la
    supervision.
-0. Ensuite — sources « fichiers » (rsync, archives tar), au-delà des
-   bases de données.
+0. Ensuite — sources « fichiers » (archives tar d'abord), au-delà des
+   bases de données ; mode « pull » documenté (l'hôte distant vient
+   chercher les sauvegardes).
 
 == Développement
 

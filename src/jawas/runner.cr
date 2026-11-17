@@ -8,27 +8,48 @@ module Jawas
   # 3. dump de chaque base de chaque source (un échec n'arrête pas les
   #    autres) ;
   # 4. rotation (sauf `prune: false`) ;
-  # 5. hooks `post` avec `JAWAS_STATUS` (`ok` / `failed`) et
+  # 5. envoi vers les `[[remote]]` (sauf `upload: false`) ;
+  # 6. hooks `post` avec `JAWAS_STATUS` (`ok` / `failed`) et
   #    `JAWAS_REPORT` (chemin du rapport JSON) ;
-  # 6. rapport `last-run.json`.
+  # 7. rapport `last-run.json`.
   #
   # Sans `apply`, rien n'est écrit : le rapport décrit ce qui serait fait.
   class Runner
     getter config : Config
     getter layout : Layout
+    @upload = true
 
     def initialize(@config : Config, @sources : Array(String) = [] of String,
-                   @databases : Array(String) = [] of String, @log : IO = STDERR)
+                   @databases : Array(String) = [] of String, @log : IO = STDERR,
+                   @remotes : Array(String) = [] of String)
       @layout = Layout.new(@config.storage.dir)
-      unknown = @sources - @config.sources.map(&.name)
-      raise ConfigError.new("source(s) inconnue(s) : #{unknown.join(", ")}") unless unknown.empty?
+      unless @config.sources.empty?
+        unknown = @sources - @config.sources.map(&.name)
+        raise ConfigError.new("source(s) inconnue(s) : #{unknown.join(", ")}") unless unknown.empty?
+      end
+      unknown = @remotes - @config.remotes.map(&.name)
+      raise ConfigError.new("destination(s) inconnue(s) : #{unknown.join(", ")}") unless unknown.empty?
+    end
+
+    # Noms des sources à traiter. Sans `[[source]]` (hôte qui reçoit des
+    # sauvegardes), ce sont les sources présentes dans le stockage.
+    def source_names : Array(String)
+      return selected_sources.map(&.name) unless @config.sources.empty?
+      stored = @layout.stored_sources
+      @sources.empty? ? stored : stored & @sources
+    end
+
+    def selected_remotes : Array(Config::RemoteConfig)
+      @remotes.empty? ? @config.remotes : @config.remotes.select { |remote| @remotes.includes?(remote.name) }
     end
 
     def selected_sources : Array(Config::SourceConfig)
       @sources.empty? ? @config.sources : @config.sources.select { |source| @sources.includes?(source.name) }
     end
 
-    def backup(apply : Bool, prune : Bool = true, now : Time = Time.local) : Report
+    def backup(apply : Bool, prune : Bool = true, now : Time = Time.local, upload : Bool = true) : Report
+      raise ConfigError.new("aucune source déclarée ([[source]]) : rien à sauvegarder") if @config.sources.empty?
+      @upload = upload
       report = Report.new(now, apply)
       periods = Calendar.periods_for(now, @config.schedule.weekly_day, @config.schedule.monthly_day)
       if apply
@@ -43,8 +64,25 @@ module Jawas
 
     def prune(apply : Bool, now : Time = Time.local) : Array(PrunedFile)
       retention = Retention.new(@layout, @config.retention)
-      return retention.prune(selected_sources.map(&.name), now, apply: false) unless apply
-      with_lock { retention.prune(selected_sources.map(&.name), now, apply: true) }
+      return retention.prune(source_names, now, apply: false) unless apply
+      with_lock { retention.prune(source_names, now, apply: true) }
+    end
+
+    # Envoi seul (`jawas upload`), sous le verrou : pas de rotation
+    # pendant un transfert.
+    def upload(apply : Bool) : Array(UploadResult)
+      return send_remotes(apply: false) unless apply
+      with_lock { send_remotes(apply: true) }
+    end
+
+    private def send_remotes(apply : Bool) : Array(UploadResult)
+      selected_remotes.map do |remote|
+        @log.puts "→ envoi #{remote.name} (#{remote.type} #{remote.destination})" if apply
+        result = Uploader.new(@layout, remote, @log).upload(source_names, apply)
+        @log.puts "  ✗ #{result.error}" if result.error
+        result.failures.each { |failure| @log.puts "  ✗ #{failure}" }
+        result
+      end
     end
 
     private def run(report : Report, periods : Array(Period), now : Time, prune : Bool) : Nil
@@ -61,6 +99,7 @@ module Jawas
         @log.puts "  ✗ #{result.error}" unless result.ok?
       end
       report.pruned.concat(Retention.new(@layout, @config.retention).prune(selected_sources.map(&.name), now, apply: true)) if prune
+      report.uploads.concat(send_remotes(apply: true)) if @upload
       report.finished_at = Time.local
       write_report(report)
       env = {"JAWAS_STATUS" => report.ok? ? "ok" : "failed", "JAWAS_REPORT" => @layout.report_path}
@@ -80,6 +119,7 @@ module Jawas
         report.dumps << DumpResult.new(source.name, db, periods.map(&.dirname), path)
       end
       report.pruned.concat(prune(apply: false, now: now)) if prune
+      report.uploads.concat(send_remotes(apply: false)) if @upload
     end
 
     private def each_database(report : Report, &) : Nil

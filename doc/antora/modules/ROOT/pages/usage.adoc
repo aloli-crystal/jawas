@@ -16,11 +16,16 @@ jawas verify -A -i ~/.config/age/jawas.txt
 jawas restore -d app                # dry-run : sauvegarde et cible
 jawas restore -d app --apply        # dans la base jetable app_r<AAAAMMJJHHMM>
 jawas restore -d app -t app -R -i ~/.config/age/jawas.txt --apply   # écrase l'originale
+jawas upload                        # dry-run : sauvegardes à envoyer
+jawas upload -a -r coffre           # envoi vers une seule destination
+jawas receive -S /srv/jawas/web1 -a # côté distant (commande forcée ssh)
+jawas prune -S /srv/jawas/web1 -a   # rotation sur l'hôte distant
 ----
 
-`backup` et `prune` sont en dry-run par défaut ; `--apply` (`-a`)
-exécute. Codes de sortie : `0` succès, `1` configuration, `2` au moins
-une base en échec, `3` verrou tenu.
+`backup`, `prune`, `upload`, `restore` et `receive` sont en dry-run
+par défaut ; `--apply` (`-a`) exécute. Codes de sortie : `0` succès,
+`1` configuration, `2` au moins une base ou un envoi en échec, `3`
+verrou tenu.
 
 == Configuration
 
@@ -45,6 +50,33 @@ une base en échec, `3` verrou tenu.
   sélection (`databases` ou `paths`, `exclude`, `exclude_tables`),
   options (`format`, `globals`, `single_transaction`, `routines`,
   `events`, `extra_args`, `dump_bin`, `client_bin`).
+* `[[remote]]` (facultatif) : envoi en ajout seul après chaque
+  `backup --apply`. `type = "ssh"` : `host`, `user`, `port`,
+  `identity`, `ssh_options`, `command` (défaut
+  `jawas receive --apply`) ; `type = "rclone"` : `target`, `config`,
+  `extra_args`. Communs : `name`, `binary`, `periods`.
+
+== Envoi distant
+
+Côté distant, un compte dédié reçoit les sauvegardes par une clé à
+commande forcée ; la racine est fixée là, jamais par l'émetteur :
+
+[source]
+----
+command="jawas receive -S /srv/jawas/web1 --apply",restrict ssh-ed25519 AAAA… jawas
+----
+
+Le récepteur n'accepte que des fichiers nouveaux, contrôle leur
+SHA-256 et refuse de remplacer un fichier existant. Un serveur
+compromis ne peut donc pas effacer l'historique distant. La rotation
+distante se fait sur place (`jawas prune -S /srv/jawas/web1 --apply`
+en cron), avec une rétention au moins égale à celle de l'émetteur :
+sinon les sauvegardes purgées à distance seraient renvoyées.
+
+Avec `rclone`, `copy --immutable` ne supprime ni ne remplace rien ; les
+liens physiques ne sont pas conservés (`periods = ["daily"]` évite de
+payer trois fois le même fichier). Le verrouillage d'objets du
+stockage S3 apporte la même garantie d'ajout seul.
 
 == Bibliothèque
 
